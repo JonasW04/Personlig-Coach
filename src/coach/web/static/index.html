@@ -29,13 +29,36 @@
   </section>
 
   <!-- Stats -->
-  <section id="view-stats" class="view scroll" hidden>
-    <div class="cards" id="summary-cards"></div>
-    <div class="chart-card"><h3>Weight</h3><canvas id="chart-weight"></canvas></div>
-    <div class="chart-card"><h3>Body composition (kg)</h3><canvas id="chart-body"></canvas></div>
-    <div class="chart-card"><h3>Weekly lifting tonnage (kg)</h3><canvas id="chart-tonnage"></canvas></div>
-    <div class="chart-card"><h3>Weekly cardio distance (km)</h3><canvas id="chart-cardio"></canvas></div>
-    <div id="stats-empty" class="empty" hidden>No data yet — run a sync.</div>
+  <section id="view-stats" class="view scroll stats-view" hidden>
+    <div class="stats-container">
+      <div class="stats-header">
+        <div>
+          <p class="stats-kicker">12 week view</p>
+          <h2>Training snapshot</h2>
+        </div>
+        <div id="stats-meta" class="stats-meta" aria-live="polite">Loading stats...</div>
+      </div>
+      <div class="cards stats-summary" id="summary-cards"></div>
+      <div class="stats-charts">
+        <section class="chart-card chart-card-weight">
+          <div class="chart-heading"><h3>Weight</h3><span>kg</span></div>
+          <div class="chart-frame"><canvas id="chart-weight"></canvas></div>
+        </section>
+        <section class="chart-card">
+          <div class="chart-heading"><h3>Body composition</h3><span>kg</span></div>
+          <div class="chart-frame"><canvas id="chart-body"></canvas></div>
+        </section>
+        <section class="chart-card">
+          <div class="chart-heading"><h3>Lifting tonnage</h3><span>weekly kg</span></div>
+          <div class="chart-frame"><canvas id="chart-tonnage"></canvas></div>
+        </section>
+        <section class="chart-card">
+          <div class="chart-heading"><h3>Cardio distance</h3><span>weekly km</span></div>
+          <div class="chart-frame"><canvas id="chart-cardio"></canvas></div>
+        </section>
+      </div>
+      <div id="stats-empty" class="empty stats-empty" hidden>No data yet. Run a sync to populate the dashboard.</div>
+    </div>
   </section>
 
   <!-- Reviews -->
