@@ -608,8 +608,10 @@
             <div class="panel-head">
               <div><h3>Body weight</h3><div class="sub" id="${weightSubId}">${weightSubText}</div></div>
               <div class="body-chart-tools">
-                ${weightTarget != null ? `<div class="chart-tabs"><button type="button" class="${state.predictWeight ? "active" : ""}" data-predict-weight>Predict</button></div>` : ""}
-                ${weightLegend}
+                <div class="body-tools-controls">
+                  ${weightTarget != null ? `<div class="chart-tabs"><button type="button" class="${state.predictWeight ? "active" : ""}" data-predict-weight>Predict</button></div>` : ""}
+                  ${weightLegend}
+                </div>
               </div>
             </div>
             <div class="body-metrics">
@@ -623,11 +625,13 @@
             <div class="panel-head">
               <div><h3>Body composition</h3><div class="sub" id="${compSubId}">${bodyCompositionSubtitle(mode)}</div></div>
               <div class="body-chart-tools">
-                <div class="chart-tabs" role="group" aria-label="Body composition chart mode">
-                  <button type="button" class="${mode === "mass" ? "active" : ""}" data-body-comp-mode="mass">kg</button>
-                  <button type="button" class="${mode === "percent" ? "active" : ""}" data-body-comp-mode="percent">%</button>
+                <div class="body-tools-controls">
+                  <div class="chart-tabs" role="group" aria-label="Body composition chart mode">
+                    <button type="button" class="${mode === "mass" ? "active" : ""}" data-body-comp-mode="mass">kg</button>
+                    <button type="button" class="${mode === "percent" ? "active" : ""}" data-body-comp-mode="percent">%</button>
+                  </div>
+                  ${fatTarget != null ? `<div class="chart-tabs"><button type="button" class="${state.predictFat && mode === "percent" ? "active" : ""}" data-predict-fat>Predict</button></div>` : ""}
                 </div>
-                ${fatTarget != null ? `<div class="chart-tabs"><button type="button" class="${state.predictFat && mode === "percent" ? "active" : ""}" data-predict-fat>Predict</button></div>` : ""}
                 <div id="${compLegendId}">${compositionLegend}</div>
               </div>
             </div>

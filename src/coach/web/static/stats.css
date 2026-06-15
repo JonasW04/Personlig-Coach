@@ -343,6 +343,7 @@
 .chart-tabs button.active { background: var(--surface-3); color: var(--text); border-color: var(--line-strong); }
 .body-chart-tools { display: flex; align-items: flex-end; gap: 8px; flex-direction: column; }
 .body-chart-tools .chart-tabs { margin-bottom: 0; }
+.body-tools-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
 .empty-block { border: 1px dashed var(--line); border-radius: var(--r); padding: 30px; text-align: center; color: var(--faint); font-size: 13px; background: var(--bg-2); }
 
