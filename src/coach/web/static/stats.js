@@ -100,6 +100,16 @@
     if (goal.metric === "body_fat") return latestBody ? latestBody.fat_ratio_pct : null;
     return null;
   }
+  // Earliest recorded reading for a body metric — the starting point a
+  // "toward" goal measures progress from (so gaining and losing both work).
+  function goalBaseline(goal) {
+    const field = goal.metric === "body_weight" ? "weight_kg"
+      : goal.metric === "body_fat" ? "fat_ratio_pct" : null;
+    if (!field) return null;
+    const rows = D().bodySlice(D().firstDate, D().lastDate);
+    for (const r of rows) if (r[field] != null) return r[field];
+    return null;
+  }
   function goalTarget(key) {
     const goal = D().goals().find((g) => g.key === key && g.enabled && g.target_value != null);
     return goal ? Number(goal.target_value) : null;
@@ -109,7 +119,7 @@
     const dp = unit === "kg" || unit === "%" ? 1 : 0;
     return `${nf(value, dp)}${unit ? `<span class="unit">${unit}</span>` : ""}`;
   }
-  function goalStatus(goal, current) {
+  function goalStatus(goal, current, baseline) {
     const target = goal.target_value;
     if (target == null || current == null) return { pct: 0, label: "Set target", state: "unset" };
     if (goal.direction === "at_most") {
@@ -121,11 +131,23 @@
       };
     }
     if (goal.direction === "toward") {
+      // Bidirectional target: works whether the user is gaining or losing.
+      // Progress runs from the starting baseline toward the target, so being
+      // below a gain target (or above a loss target) reads as "not there yet"
+      // rather than wrongly counting as "on target".
       const diff = current - target;
+      const tol = goal.unit === "%" ? 0.2 : 0.3;
+      const reached = Math.abs(diff) <= tol;
+      let pct = reached ? 1 : 0;
+      if (!reached && baseline != null && baseline !== target) {
+        pct = Math.max(0, Math.min(1, (baseline - current) / (baseline - target)));
+      }
       return {
-        pct: 1,
-        label: Math.abs(diff) < 0.05 ? "On target" : `${nf(Math.abs(diff), 1)}${goal.unit} ${diff > 0 ? "over" : "under"}`,
-        state: Math.abs(diff) < 0.05 ? "good" : "neutral",
+        pct,
+        label: reached
+          ? "On target"
+          : `${nf(Math.abs(diff), 1)}${goal.unit} ${diff > 0 ? "above" : "below"} target`,
+        state: reached ? "good" : "neutral",
       };
     }
     const pct = target ? current / target : 0;
@@ -142,7 +164,7 @@
     if (!allGoals.length) return { html: "", mount() {} };
     const cards = goals.map((goal) => {
       const current = goalValue(goal);
-      const status = goalStatus(goal, current);
+      const status = goalStatus(goal, current, goalBaseline(goal));
       const target = goal.target_value == null ? "Set target" : fmtGoalValue(goal.target_value, goal.unit);
       return `<div class="goal-card ${status.state}">
         <div class="goal-top"><span>${goal.label}</span><span>${goal.scope}</span></div>
