@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
@@ -31,14 +32,22 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
+from coach import focus
 from coach.agents.coordinator import build_options
 from coach.config import settings
 from coach.db import SessionLocal, init_db
 from coach.models import ActionItem, Goal, PushSubscription, Report
 from coach.web import stats
 
+log = logging.getLogger("coach.web")
+
 STATIC_DIR = Path(__file__).parent / "static"
 PUBLIC_PATHS = {"/login", "/logout", "/healthz"}
+
+
+def _week_start(d: date | None = None) -> date:
+    d = d or date.today()
+    return d - timedelta(days=d.weekday())  # Monday
 
 
 # --------------------------------------------------------------------------- chat
@@ -81,6 +90,8 @@ class SessionManager:
 chat_sessions = SessionManager()
 sync_lock = asyncio.Lock()
 _scheduler = None
+# Tracks the background regeneration of reports kicked off when the focus changes.
+_focus_regen = {"running": False, "kinds": [], "error": None}
 
 
 @asynccontextmanager
@@ -331,6 +342,10 @@ def _action_json(item: ActionItem) -> dict:
         "title": item.title,
         "status": item.status,
         "due_date": item.due_date.isoformat() if item.due_date else None,
+        "week_start": item.week_start.isoformat() if item.week_start else None,
+        "metric": item.metric,
+        "target_value": item.target_value,
+        "auto": bool(item.auto),
         "source_report_id": item.source_report_id,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
@@ -341,6 +356,8 @@ def _action_json(item: ActionItem) -> dict:
 class ActionCreate(BaseModel):
     title: str
     due_date: date | None = None
+    metric: str | None = None
+    target_value: float | None = None
     source_report_id: int | None = None
 
 
@@ -351,17 +368,17 @@ class ActionUpdate(BaseModel):
 
 
 @app.get("/api/actions")
-async def list_actions(status: str | None = None, limit: int = 100) -> dict:
+async def list_actions(
+    status: str | None = None, week: str | None = None, limit: int = 100
+) -> dict:
     limit = max(1, min(limit, 200))
     with SessionLocal() as s:
-        q = select(ActionItem).order_by(ActionItem.created_at.desc()).limit(limit)
+        q = select(ActionItem)
         if status:
-            q = (
-                select(ActionItem)
-                .where(ActionItem.status == status)
-                .order_by(ActionItem.created_at.desc())
-                .limit(limit)
-            )
+            q = q.where(ActionItem.status == status)
+        if week == "current":
+            q = q.where(ActionItem.week_start == _week_start())
+        q = q.order_by(ActionItem.created_at.desc()).limit(limit)
         rows = s.execute(q).scalars().all()
     return {"actions": [_action_json(row) for row in rows]}
 
@@ -371,10 +388,14 @@ async def create_action(req: ActionCreate) -> dict:
     title = req.title.strip()
     if not title:
         raise HTTPException(400, "title is required")
+    metric = req.metric if req.metric in GOAL_SPECS else None
     with SessionLocal() as s:
         item = ActionItem(
             title=title,
             due_date=req.due_date,
+            week_start=_week_start(),
+            metric=metric,
+            target_value=req.target_value,
             source_report_id=req.source_report_id,
         )
         s.add(item)
@@ -417,6 +438,28 @@ async def delete_action(item_id: int) -> dict:
         s.delete(item)
         s.commit()
     return {"ok": True}
+
+
+@app.post("/api/actions/import-latest")
+async def import_latest_actions() -> dict:
+    """Re-extract and store structured actions from the latest weekly review.
+
+    Useful when the user wants to refresh their plan mid-week, or when an older
+    report was generated before structured extraction was available.
+    """
+    from coach import reports
+
+    with SessionLocal() as s:
+        row = s.execute(
+            select(Report).where(Report.kind == "weekly").order_by(Report.created_at.desc()).limit(1)
+        ).scalars().first()
+        if row is None:
+            raise HTTPException(404, "No weekly review found. Generate one first.")
+        report_id, content = row.id, row.content
+
+    actions = await reports.extract_actions(content)
+    count = reports.store_week_actions(report_id, actions)
+    return {"count": count}
 
 
 # ------------------------------------------------------------------ notifications
@@ -519,6 +562,45 @@ async def generate_report(req: GenerateRequest) -> dict:
 
     report = await reports.generate_and_store(req.kind)
     return _report_json(report)
+
+
+# ------------------------------------------------------------------------- focus
+class FocusUpdate(BaseModel):
+    focus_raw: str
+
+
+async def _regenerate_reports(kinds: tuple[str, ...]) -> None:
+    """Regenerate standing reports so they reflect a freshly-changed focus."""
+    from coach import reports
+
+    _focus_regen.update(running=True, kinds=list(kinds), error=None)
+    try:
+        for kind in kinds:
+            try:
+                await reports.generate_and_store(kind)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("focus regen failed for %s", kind)
+                _focus_regen["error"] = str(exc)
+    finally:
+        _focus_regen.update(running=False, kinds=[])
+
+
+@app.get("/api/focus")
+async def get_focus() -> dict:
+    profile = await asyncio.to_thread(focus.get_profile)
+    return {**profile, "regenerating": _focus_regen["running"]}
+
+
+@app.post("/api/focus")
+async def set_focus(req: FocusUpdate) -> dict:
+    raw = req.focus_raw.strip()
+    if not raw:
+        raise HTTPException(400, "focus_raw is required")
+    profile = await focus.set_focus(raw)
+    # Regenerate the standing reports in the background so they immediately
+    # represent the new focus; the client polls /api/focus for completion.
+    asyncio.create_task(_regenerate_reports(("readiness", "weekly")))
+    return {**profile, "regenerating": True}
 
 
 # Serve the PWA shell. Mounted last so it doesn't shadow API/auth routes.

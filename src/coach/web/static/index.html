@@ -71,32 +71,60 @@
 
   <!-- Reviews -->
   <section id="view-reports" class="view scroll" hidden>
+    <!-- Focus -->
+    <div class="focus-card">
+      <div class="focus-head">
+        <div>
+          <p class="stats-kicker">Focus</p>
+          <h2 id="focus-text">Loading…</h2>
+        </div>
+        <button id="focus-edit" class="secondary" type="button">Edit</button>
+      </div>
+      <form id="focus-form" class="focus-form" hidden>
+        <textarea id="focus-input" rows="3" placeholder="e.g. Lose weight while maintaining strength" autocomplete="off"></textarea>
+        <div class="focus-form-actions">
+          <button id="focus-cancel" type="button" class="ghost">Cancel</button>
+          <button class="primary" type="submit">Save &amp; update coaching</button>
+        </div>
+      </form>
+      <div id="focus-status" class="status-line" aria-live="polite"></div>
+    </div>
+
+    <!-- Today's readiness verdict -->
+    <button id="readiness-hero" class="verdict-card" type="button" hidden></button>
+
+    <!-- This week's plan -->
     <div class="action-panel">
       <div class="action-head">
         <div>
           <p class="stats-kicker">Plan</p>
-          <h2>Action plan</h2>
+          <h2>This week</h2>
         </div>
         <button id="import-actions" class="secondary" type="button">Use latest review</button>
       </div>
+      <div id="goal-progress" class="goal-progress"></div>
+      <div id="actions-list" class="actions-list"></div>
       <form id="action-form" class="action-form">
         <input id="action-title" type="text" placeholder="Add a coaching action…" autocomplete="off" />
         <input id="action-due" type="date" aria-label="Due date" />
         <button class="primary" type="submit">Add</button>
       </form>
       <div id="action-status" class="status-line" aria-live="polite"></div>
-      <div id="actions-list" class="actions-list"></div>
     </div>
-    <div class="segmented">
-      <button data-kind="readiness" class="active">Daily readiness</button>
-      <button data-kind="weekly">Weekly review</button>
+
+    <!-- Report archive -->
+    <div class="reports-block">
+      <div class="segmented">
+        <button data-kind="readiness" class="active">Daily readiness</button>
+        <button data-kind="weekly">Weekly review</button>
+      </div>
+      <div class="reports-actions">
+        <button id="generate" class="primary">Generate now</button>
+        <button id="push-toggle" class="secondary" type="button" hidden>Enable notifications</button>
+      </div>
+      <div id="push-status" class="status-line" aria-live="polite"></div>
+      <div id="reports-list"></div>
     </div>
-    <div class="reports-actions">
-      <button id="generate" class="primary">Generate now</button>
-      <button id="push-toggle" class="secondary" type="button" hidden>Enable notifications</button>
-    </div>
-    <div id="push-status" class="status-line" aria-live="polite"></div>
-    <div id="reports-list"></div>
   </section>
 
   <nav id="tabbar">

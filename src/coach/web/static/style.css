@@ -159,8 +159,7 @@ header h1 {
 .report summary::-webkit-details-marker { display: none; }
 .report summary .date { color: var(--muted); font-weight: 400; font-size: 13px; }
 .report .body { border-top: 1px solid var(--line-soft); padding: 6px 0 14px; }
-#view-reports .segmented, #view-reports .reports-actions { margin: 16px 16px 0; padding-left: 0; padding-right: 0; }
-#view-reports .segmented { margin: 16px 16px 0; }
+/* segmented + actions margin handled by .reports-block children now */
 
 .action-panel {
   margin: 16px 16px 0;
@@ -248,3 +247,139 @@ header h1 {
 @media (min-width: 760px) {
   .action-form { grid-template-columns: minmax(0, 1fr) 150px 90px; }
 }
+
+/* ---------- focus card ---------- */
+.focus-card {
+  margin: 16px 16px 0;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+  padding: 15px;
+}
+.focus-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.focus-head h2 {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  line-height: 1.3;
+}
+.focus-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.focus-form textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 11px;
+}
+.focus-form textarea:focus { outline: none; border-color: var(--strength); }
+.focus-form-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ---------- readiness verdict card ---------- */
+.verdict-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 16px 0;
+  padding: 13px 16px;
+  border-radius: var(--r);
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  width: calc(100% - 32px);
+  transition: opacity .15s;
+}
+.verdict-card:hover { opacity: 0.85; }
+.verdict-train  { background: rgba(70, 201, 139, 0.12); border-color: rgba(70, 201, 139, 0.3); }
+.verdict-easy   { background: rgba(224, 162, 59, 0.12); border-color: rgba(224, 162, 59, 0.3); }
+.verdict-rest   { background: rgba(255, 107, 74, 0.12); border-color: rgba(255, 107, 74, 0.3); }
+.verdict-badge {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 20px;
+}
+.verdict-train .verdict-badge  { background: rgba(70, 201, 139, 0.2); color: #46c98b; }
+.verdict-easy  .verdict-badge  { background: rgba(224, 162, 59, 0.2); color: #e0a23b; }
+.verdict-rest  .verdict-badge  { background: rgba(255, 107, 74, 0.2); color: var(--cardio); }
+.verdict-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.verdict-date { flex: 0 0 auto; font-size: 11px; color: var(--faint); }
+
+/* ---------- weekly goal progress ---------- */
+.goal-progress { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.goal-prog { display: flex; flex-direction: column; gap: 5px; }
+.goal-prog-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.goal-prog-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.goal-prog-val   { font-size: 12px; color: var(--muted); flex: 0 0 auto; }
+.goal-prog-bar {
+  height: 6px;
+  background: var(--surface-3);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.goal-prog-bar span {
+  display: block;
+  height: 100%;
+  background: var(--strength);
+  border-radius: 99px;
+  transition: width .4s ease;
+}
+.goal-prog.met .goal-prog-bar span { background: var(--good); }
+.goal-prog.met .goal-prog-val { color: var(--good); }
+
+/* ---------- action chips (metric progress) ---------- */
+.action-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--strength-dim);
+  color: var(--strength-2);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.action-chip.met { background: rgba(70, 201, 139, 0.15); color: var(--good); }
+.action-row.auto { border-left: 2px solid var(--strength-dim); }
+
+/* ---------- reports block ---------- */
+.reports-block { margin-top: 16px; }
+.reports-block .segmented { margin: 0 16px; }
+.reports-block .reports-actions { margin: 0 16px; padding: 12px 0 0; }
+.reports-block #push-status { padding-left: 16px; }
+.reports-block #reports-list { padding: 0 16px 16px; }

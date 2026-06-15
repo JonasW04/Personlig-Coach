@@ -21,7 +21,7 @@ function switchView(view) {
   }
   $("title").textContent = TITLES[view];
   if (view === "stats") loadStats();
-  if (view === "reports") { loadActions(); loadReports(); }
+  if (view === "reports") { loadFocus(); loadPlan(); loadReadinessHero(); loadReports(); }
   history.replaceState(null, "", "#" + view);
 }
 
@@ -189,43 +189,234 @@ const actionDue = $("action-due");
 const actionsList = $("actions-list");
 const actionStatus = $("action-status");
 const importActions = $("import-actions");
+const focusText = $("focus-text");
+const focusEdit = $("focus-edit");
+const focusForm = $("focus-form");
+const focusInput = $("focus-input");
+const focusCancel = $("focus-cancel");
+const focusStatusEl = $("focus-status");
+const readinessHero = $("readiness-hero");
+const goalProgressEl = $("goal-progress");
 let pushPublicKey = null;
 let serviceWorkerReady = null;
 let cachedActions = [];
+let _focusRegenPoll = null;
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[ch]));
 }
 
 function setActionStatus(text) {
   if (actionStatus) actionStatus.textContent = text || "";
 }
-
-document.querySelectorAll(".segmented button").forEach((b) =>
-  b.addEventListener("click", () => {
-    reportKind = b.dataset.kind;
-    document.querySelectorAll(".segmented button").forEach((x) =>
-      x.classList.toggle("active", x === b)
-    );
-    loadReports();
-  })
-);
+function setFocusStatus(text) {
+  if (focusStatusEl) focusStatusEl.textContent = text || "";
+}
 
 function fmtDate(iso) {
   if (!iso) return "";
   return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
-
 function fmtDue(iso) {
   if (!iso) return "";
   return new Date(iso + "T00:00:00").toLocaleDateString([], { month: "short", day: "numeric" });
 }
+
+// ---- focus / coaching goal ----
+
+function renderFocusCard(profile) {
+  if (!focusText) return;
+  focusText.textContent = profile.focus_raw || "Not set";
+  if (focusInput) focusInput.value = profile.focus_raw || "";
+}
+
+function startFocusRegenPoll() {
+  if (_focusRegenPoll) return;
+  setFocusStatus("Updating your coaching… regenerating reports");
+  _focusRegenPoll = setInterval(async () => {
+    try {
+      const resp = await fetch("/api/focus");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data.regenerating) {
+        clearInterval(_focusRegenPoll);
+        _focusRegenPoll = null;
+        setFocusStatus("");
+        // Reload everything so the new reports are visible
+        loadReadinessHero();
+        loadReports();
+        loadPlan();
+      }
+    } catch (_) { /* ignore */ }
+  }, 5000);
+}
+
+async function loadFocus() {
+  try {
+    const resp = await fetch("/api/focus");
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const profile = await resp.json();
+    renderFocusCard(profile);
+    if (profile.regenerating) startFocusRegenPoll();
+  } catch (err) {
+    setFocusStatus(`Could not load focus: ${err.message}`);
+  }
+}
+
+if (focusEdit) {
+  focusEdit.addEventListener("click", () => {
+    focusForm.hidden = false;
+    focusEdit.hidden = true;
+    focusInput.focus();
+  });
+}
+if (focusCancel) {
+  focusCancel.addEventListener("click", () => {
+    focusForm.hidden = true;
+    focusEdit.hidden = false;
+    setFocusStatus("");
+  });
+}
+if (focusForm) {
+  focusForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const raw = focusInput.value.trim();
+    if (!raw) return;
+    const btn = focusForm.querySelector("button[type='submit']");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    try {
+      const resp = await fetch("/api/focus", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ focus_raw: raw }),
+      });
+      if (resp.status === 401) { location.href = "/login"; return; }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const profile = await resp.json();
+      renderFocusCard(profile);
+      focusForm.hidden = true;
+      focusEdit.hidden = false;
+      if (profile.regenerating) startFocusRegenPoll();
+    } catch (err) {
+      setFocusStatus(`Save failed: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Save & update coaching";
+    }
+  });
+}
+
+// ---- readiness verdict hero ----
+
+function parseVerdict(content) {
+  const lines = (content || "").split(/\r?\n/);
+  for (const line of lines) {
+    const m = line.trim().match(/^verdict:\s*(.+)$/i);
+    if (m) {
+      const rest = m[1].replace(/\*\*/g, "").trim();
+      const parts = rest.split(/\s*[—–-]{1,2}\s*/);
+      return { verdict: parts[0].trim(), detail: parts.slice(1).join(" — ").trim() };
+    }
+  }
+  return null;
+}
+
+function verdictLevel(v) {
+  if (/rest/i.test(v)) return "rest";
+  if (/easy|light|caution/i.test(v)) return "easy";
+  return "train";
+}
+
+async function loadReadinessHero() {
+  if (!readinessHero) return;
+  try {
+    const resp = await fetch("/api/reports?kind=readiness&limit=1");
+    if (!resp.ok) { readinessHero.hidden = true; return; }
+    const d = await resp.json();
+    const r = d.reports && d.reports[0];
+    if (!r) { readinessHero.hidden = true; return; }
+    const v = parseVerdict(r.content);
+    if (!v) { readinessHero.hidden = true; return; }
+    const lvl = verdictLevel(v.verdict);
+    readinessHero.className = `verdict-card verdict-${lvl}`;
+    readinessHero.hidden = false;
+    readinessHero.innerHTML =
+      `<span class="verdict-badge">${esc(v.verdict)}</span>` +
+      `<span class="verdict-detail">${esc(v.detail)}</span>` +
+      `<span class="verdict-date">${fmtDate(r.created_at)}</span>`;
+    readinessHero.onclick = () => {
+      // switch to readiness tab in the archive
+      reportKind = "readiness";
+      document.querySelectorAll(".segmented button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.kind === "readiness");
+      });
+      loadReports();
+      const block = document.querySelector(".reports-block");
+      if (block) block.scrollIntoView({ behavior: "smooth" });
+    };
+  } catch (_) {
+    readinessHero.hidden = true;
+  }
+}
+
+// ---- weekly goal progress ----
+
+const WEEKLY_METRICS = {
+  weekly_strength_sessions: (s) => s.liftSessions,
+  weekly_active_days: (s) => s.activeDays,
+  weekly_cardio_distance: (s) => Math.round(s.km * 10) / 10,
+  weekly_strength_volume: (s) => s.tonnage,
+};
+
+function fmtMetricVal(v, unit) {
+  if (unit === "kg" && v >= 1000) return (v / 1000).toFixed(1) + "k";
+  if (unit === "km") return v.toFixed(1);
+  return Math.round(v).toString();
+}
+
+let _weekSummary = null;
+
+async function getWeekSummary() {
+  if (!window.CoachData) return null;
+  await window.CoachData.ready;
+  const { start, end } = window.CoachData.currentWeekRange();
+  _weekSummary = window.CoachData.summarize(start, end);
+  return _weekSummary;
+}
+
+function metricCurrent(metric) {
+  if (!_weekSummary || !WEEKLY_METRICS[metric]) return null;
+  return WEEKLY_METRICS[metric](_weekSummary);
+}
+
+async function renderGoalProgress() {
+  if (!goalProgressEl) return;
+  const sum = await getWeekSummary();
+  if (!sum || !window.CoachData) { goalProgressEl.innerHTML = ""; return; }
+  const goals = (window.CoachData.goals() || []).filter(
+    (g) => WEEKLY_METRICS[g.key] && g.enabled && g.target_value != null
+  );
+  if (!goals.length) { goalProgressEl.innerHTML = ""; return; }
+  goalProgressEl.innerHTML = goals.map((g) => {
+    const cur = WEEKLY_METRICS[g.key](sum);
+    const target = g.target_value;
+    const pct = Math.max(0, Math.min(1, target ? cur / target : 0));
+    const met = cur >= target;
+    return `<div class="goal-prog${met ? " met" : ""}">
+      <div class="goal-prog-top">
+        <span class="goal-prog-label">${esc(g.label)}</span>
+        <span class="goal-prog-val">${fmtMetricVal(cur, g.unit)} / ${fmtMetricVal(target, g.unit)} ${esc(g.unit)}</span>
+      </div>
+      <div class="goal-prog-bar"><span style="width:${(pct * 100).toFixed(1)}%"></span></div>
+    </div>`;
+  }).join("");
+}
+
+// ---- action items ----
 
 function renderActions(actions) {
   if (!actionsList) return;
@@ -233,17 +424,26 @@ function renderActions(actions) {
   const open = cachedActions.filter((a) => a.status !== "done");
   const done = cachedActions.filter((a) => a.status === "done").slice(0, 5);
   if (!open.length && !done.length) {
-    actionsList.innerHTML = `<div class="action-empty">No open actions.</div>`;
+    actionsList.innerHTML = `<div class="action-empty">No actions for this week yet.</div>`;
     return;
   }
+  const progressChip = (a) => {
+    if (!a.metric || !WEEKLY_METRICS[a.metric] || _weekSummary === null) return "";
+    const cur = WEEKLY_METRICS[a.metric](_weekSummary);
+    const target = a.target_value;
+    if (target == null) return "";
+    const met = cur >= target;
+    const unit = (window.CoachData?.goals() || []).find((g) => g.key === a.metric)?.unit || "";
+    return `<span class="action-chip${met ? " met" : ""}">${fmtMetricVal(cur, unit)}/${fmtMetricVal(target, unit)}</span>`;
+  };
   const row = (a) => `
-    <div class="action-row ${a.status === "done" ? "done" : ""}" data-id="${a.id}">
+    <div class="action-row${a.status === "done" ? " done" : ""}${a.auto ? " auto" : ""}" data-id="${a.id}">
       <label>
         <input type="checkbox" data-action-toggle="${a.id}" ${a.status === "done" ? "checked" : ""} />
-        <span>${esc(a.title)}</span>
+        <span>${esc(a.title)}${progressChip(a)}</span>
       </label>
       <div class="action-meta">
-        ${a.due_date ? `<span>${fmtDue(a.due_date)}</span>` : ""}
+        ${a.due_date && !a.week_start ? `<span>${fmtDue(a.due_date)}</span>` : ""}
         <button type="button" aria-label="Delete action" data-action-delete="${a.id}">×</button>
       </div>
     </div>`;
@@ -251,11 +451,9 @@ function renderActions(actions) {
     open.map(row).join(""),
     done.length ? `<div class="actions-done-label">Done</div>${done.map(row).join("")}` : "",
   ].join("");
-
   actionsList.querySelectorAll("[data-action-toggle]").forEach((input) => {
     input.addEventListener("change", async () => {
-      const id = input.dataset.actionToggle;
-      await updateAction(id, { status: input.checked ? "done" : "open" });
+      await updateAction(input.dataset.actionToggle, { status: input.checked ? "done" : "open" });
     });
   });
   actionsList.querySelectorAll("[data-action-delete]").forEach((button) => {
@@ -265,10 +463,18 @@ function renderActions(actions) {
   });
 }
 
+async function loadPlan() {
+  // Fetch this-week's actions and goal progress in parallel
+  await Promise.all([
+    loadActions(),
+    renderGoalProgress(),
+  ]);
+}
+
 async function loadActions() {
   if (!actionsList) return;
   try {
-    const resp = await fetch("/api/actions?limit=100");
+    const resp = await fetch("/api/actions?week=current&limit=100");
     if (resp.status === 401) { location.href = "/login"; return; }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
@@ -315,47 +521,23 @@ async function deleteAction(id) {
   }
 }
 
-function extractReportActions(markdown) {
-  const lines = (markdown || "").split(/\r?\n/);
-  const out = [];
-  let capture = false;
-  for (const line of lines) {
-    const clean = line.trim();
-    if (/^#{1,6}\s+/.test(clean)) {
-      capture = /action|next|plan|week/i.test(clean);
-      continue;
-    }
-    if (!capture) continue;
-    const item = clean.match(/^(?:[-*]|\d+[.)])\s+(.*)$/);
-    if (item && item[1]) out.push(item[1].replace(/\*\*/g, "").trim());
-  }
-  if (!out.length) {
-    for (const line of lines) {
-      const item = line.trim().match(/^(?:[-*]|\d+[.)])\s+(.*)$/);
-      if (item && item[1]) out.push(item[1].replace(/\*\*/g, "").trim());
-    }
-  }
-  return [...new Set(out.map((x) => x.replace(/\.$/, "").trim()).filter(Boolean))].slice(0, 6);
-}
-
 if (actionForm) {
   actionForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const title = actionTitle.value.trim();
     if (!title) return;
-    const label = actionForm.querySelector("button").textContent;
-    actionForm.querySelector("button").disabled = true;
+    const btn = actionForm.querySelector("button[type='submit']");
+    btn.disabled = true;
     try {
       await createAction({ title, due_date: actionDue.value || null });
       actionTitle.value = "";
       actionDue.value = "";
       setActionStatus("");
-      await loadActions();
+      await loadPlan();
     } catch (err) {
       setActionStatus(`Add failed: ${err.message}`);
     } finally {
-      actionForm.querySelector("button").disabled = false;
-      actionForm.querySelector("button").textContent = label;
+      btn.disabled = false;
     }
   });
 }
@@ -364,19 +546,16 @@ if (importActions) {
   importActions.addEventListener("click", async () => {
     importActions.disabled = true;
     const label = importActions.textContent;
-    importActions.textContent = "Adding…";
+    importActions.textContent = "Importing…";
+    setActionStatus("");
     try {
-      const resp = await fetch("/api/reports?kind=weekly&limit=1");
+      const resp = await fetch("/api/actions/import-latest", { method: "POST" });
       if (resp.status === 401) { location.href = "/login"; return; }
+      if (resp.status === 404) { setActionStatus("No weekly review yet — generate one first."); return; }
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      const report = data.reports && data.reports[0];
-      const items = extractReportActions(report && report.content);
-      const existing = new Set(cachedActions.map((a) => a.title.toLowerCase()));
-      const fresh = items.filter((item) => !existing.has(item.toLowerCase()));
-      for (const title of fresh) await createAction({ title, source_report_id: report.id });
-      setActionStatus(fresh.length ? `Added ${fresh.length} actions` : "No new actions found");
-      await loadActions();
+      setActionStatus(data.count ? `Added ${data.count} actions from latest review` : "No new actions found");
+      await loadPlan();
     } catch (err) {
       setActionStatus(`Import failed: ${err.message}`);
     } finally {
@@ -386,9 +565,21 @@ if (importActions) {
   });
 }
 
+// ---- report archive ----
+
+document.querySelectorAll(".segmented button").forEach((b) =>
+  b.addEventListener("click", () => {
+    reportKind = b.dataset.kind;
+    document.querySelectorAll(".segmented button").forEach((x) =>
+      x.classList.toggle("active", x === b)
+    );
+    loadReports();
+  })
+);
+
 function renderReports(reports) {
   if (!reports.length) {
-    reportsList.innerHTML = `<div class="empty">No ${reportKind} reports yet. Generate one above.</div>`;
+    reportsList.innerHTML = `<div class="empty">No ${reportKind === "weekly" ? "weekly" : "daily readiness"} reports yet. Generate one below.</div>`;
     return;
   }
   reportsList.innerHTML = "";
@@ -424,6 +615,9 @@ generateBtn.addEventListener("click", async () => {
     if (resp.status === 401) { location.href = "/login"; return; }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     await loadReports();
+    // Refresh hero and plan in case readiness/weekly was just generated
+    if (reportKind === "readiness") loadReadinessHero();
+    if (reportKind === "weekly") loadPlan();
   } catch (err) {
     alert(`Failed to generate: ${err.message}`);
   } finally {

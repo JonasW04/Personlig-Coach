@@ -121,7 +121,13 @@ class Goal(Base):
 
 
 class ActionItem(Base):
-    """A concrete coaching action that can be checked off by the user."""
+    """A concrete coaching action that can be checked off by the user.
+
+    Actions belonging to a weekly review carry ``week_start`` (the Monday of the
+    week they apply to) and may be linked to a dashboard goal via ``metric`` +
+    ``target_value`` so the UI can show live progress instead of a manual tick.
+    ``auto`` marks items created from a generated review (vs. typed by hand).
+    """
 
     __tablename__ = "action_items"
 
@@ -129,6 +135,10 @@ class ActionItem(Base):
     title: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String, default="open", index=True)
     due_date: Mapped[date | None] = mapped_column(Date)
+    week_start: Mapped[date | None] = mapped_column(Date, index=True)
+    metric: Mapped[str | None] = mapped_column(String)  # linked goal key, if any
+    target_value: Mapped[float | None] = mapped_column(Float)
+    auto: Mapped[bool] = mapped_column(Boolean, default=False)
     source_report_id: Mapped[int | None] = mapped_column(ForeignKey("reports.id"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
@@ -137,6 +147,24 @@ class ActionItem(Base):
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CoachProfile(Base):
+    """Singleton (id=1) holding the athlete's training focus.
+
+    ``focus_raw`` is what the user typed in plain language; ``directive`` is the
+    model-ready coaching instruction generated from it, injected into the
+    coordinator + subagent prompts so every report reflects the current goal.
+    """
+
+    __tablename__ = "coach_profile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    focus_raw: Mapped[str] = mapped_column(Text)
+    directive: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
 
 class PushSubscription(Base):

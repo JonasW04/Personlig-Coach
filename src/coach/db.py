@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from coach.config import settings
@@ -15,5 +15,21 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, future=True, expire_on_commit=False)
 
 
+# Lightweight forward migrations. We don't run Alembic; create_all() makes new
+# tables but never alters existing ones, so columns added after a table first
+# shipped are applied here. Postgres ADD COLUMN IF NOT EXISTS makes this safe to
+# run on every boot.
+_COLUMN_MIGRATIONS = [
+    "ALTER TABLE action_items ADD COLUMN IF NOT EXISTS week_start DATE",
+    "ALTER TABLE action_items ADD COLUMN IF NOT EXISTS metric VARCHAR",
+    "ALTER TABLE action_items ADD COLUMN IF NOT EXISTS target_value DOUBLE PRECISION",
+    "ALTER TABLE action_items ADD COLUMN IF NOT EXISTS auto BOOLEAN DEFAULT FALSE",
+    "CREATE INDEX IF NOT EXISTS ix_action_items_week_start ON action_items (week_start)",
+]
+
+
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        for stmt in _COLUMN_MIGRATIONS:
+            conn.execute(text(stmt))
