@@ -99,16 +99,101 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 #send:disabled { opacity: 0.4; cursor: default; }
 
 /* Stats */
-.cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.card {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+.stats-view { padding: 14px; }
+.stats-container {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
 }
-.card .value { font-size: 22px; font-weight: 700; }
-.card .label { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.stats-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 2px 4px;
+}
+.stats-kicker {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.stats-header h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.15;
+  font-weight: 700;
+}
+.stats-meta {
+  max-width: 48%;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.card {
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.card-primary { border-color: rgba(79, 140, 255, 0.58); }
+.card-green { border-color: rgba(70, 201, 139, 0.45); }
+.card-amber { border-color: rgba(224, 162, 59, 0.45); }
+.card .value {
+  font-size: 24px;
+  line-height: 1.05;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.card .label { color: var(--muted); font-size: 12px; }
+.card .meta { color: var(--muted); font-size: 12px; }
 
-.chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
-.chart-card h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); }
-.chart-card canvas { width: 100% !important; height: 200px !important; }
+.stats-charts { display: grid; gap: 14px; }
+.chart-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 294px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.chart-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.chart-card h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.chart-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.chart-frame {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+}
+.chart-card canvas { width: 100% !important; height: 100% !important; }
+.stats-empty {
+  min-height: 160px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: rgba(23, 26, 33, 0.58);
+}
 
 /* Reports */
 .segmented { display: flex; background: var(--panel-2); border-radius: 10px; padding: 4px; gap: 4px; }
@@ -149,3 +234,59 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
 }
 #tabbar button.active { color: var(--accent); font-weight: 600; }
+
+@media (max-width: 560px) {
+  .stats-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .stats-meta {
+    max-width: none;
+    text-align: left;
+  }
+}
+
+@media (min-width: 720px) {
+  .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stats-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 960px) {
+  header {
+    height: 64px;
+    padding: 0 28px;
+  }
+  header h1 { font-size: 20px; }
+  .scroll { padding: 24px 28px; }
+  #messages {
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  #composer {
+    padding: 16px max(24px, calc((100% - 900px) / 2)) 16px;
+  }
+  #view-reports { align-items: center; }
+  #view-reports > * { width: min(100%, 860px); }
+  .stats-container { gap: 16px; }
+  .stats-header h2 { font-size: 28px; }
+  .stats-summary { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .card { min-height: 118px; padding: 16px; }
+  .card .value { font-size: 26px; }
+  .chart-card { min-height: 340px; padding: 16px; }
+  .chart-frame { min-height: 270px; }
+  #tabbar {
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 24px;
+  }
+  #tabbar button {
+    flex: 0 0 auto;
+    min-width: 118px;
+    padding: 9px 18px;
+    border-radius: 8px;
+  }
+  #tabbar button.active { background: var(--panel-2); }
+}

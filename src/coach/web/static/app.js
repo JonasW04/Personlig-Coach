@@ -119,85 +119,225 @@ input.addEventListener("keydown", (e) => {
 const GRID = "#272d39";
 const MUTED = "#9aa3b2";
 const ACCENT = "#4f8cff";
+const PANEL = "#171a21";
+const TEXT = "#e7eaf0";
+const STATS_WINDOW_WEEKS = 12;
 const charts = {};
 
 function chartBase() {
   Chart.defaults.color = MUTED;
-  Chart.defaults.font.family = "-apple-system, system-ui, sans-serif";
+  Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+  Chart.defaults.borderColor = GRID;
 }
 function axes(extra = {}) {
   return {
-    x: { grid: { color: GRID }, ticks: { maxRotation: 0, autoSkip: true } },
-    y: { grid: { color: GRID }, ...extra },
+    x: {
+      grid: { display: false },
+      border: { color: GRID },
+      ticks: { color: MUTED, maxRotation: 0, autoSkip: true },
+    },
+    y: {
+      grid: { color: GRID },
+      border: { color: GRID },
+      ticks: { color: MUTED },
+      ...extra,
+    },
+  };
+}
+function chartOptions({ legend = false, y = {} } = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: {
+        display: legend,
+        labels: { color: MUTED, boxWidth: 10, boxHeight: 10, usePointStyle: true },
+      },
+      tooltip: {
+        backgroundColor: PANEL,
+        borderColor: GRID,
+        borderWidth: 1,
+        titleColor: TEXT,
+        bodyColor: TEXT,
+        displayColors: true,
+      },
+    },
+    scales: axes(y),
   };
 }
 function draw(key, cfg) {
   if (charts[key]) charts[key].destroy();
   charts[key] = new Chart($(`chart-${key}`), cfg);
 }
-function card(value, label) {
-  return `<div class="card"><div class="value">${value}</div><div class="label">${label}</div></div>`;
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
+function formatNumber(value, options = {}) {
+  if (value == null || Number.isNaN(Number(value))) return "--";
+  return Number(value).toLocaleString(undefined, options);
+}
+function formatUnit(value, unit, options = {}) {
+  const formatted = formatNumber(value, options);
+  return formatted === "--" ? formatted : `${formatted} ${unit}`;
+}
+function fmtShortDate(iso) {
+  if (!iso) return "";
+  return new Date(`${iso}T00:00:00`).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+function card(value, label, meta, tone = "") {
+  const toneClass = tone ? ` card-${tone}` : "";
+  return (
+    `<article class="card${toneClass}">` +
+    `<div class="label">${escapeHtml(label)}</div>` +
+    `<div class="value">${escapeHtml(value)}</div>` +
+    `<div class="meta">${escapeHtml(meta)}</div>` +
+    `</article>`
+  );
+}
+function renderStatsMeta(summary, hasData) {
+  const parts = [];
+  if (summary.latest_weigh_in) parts.push(`Last weigh-in ${fmtShortDate(summary.latest_weigh_in)}`);
+  if (hasData) parts.push(`${STATS_WINDOW_WEEKS} weeks synced`);
+  $("stats-meta").textContent = parts.join(" | ") || "Waiting for synced data";
 }
 
 async function loadStats() {
-  const resp = await fetch("/api/stats?weeks=12");
+  const resp = await fetch(`/api/stats?weeks=${STATS_WINDOW_WEEKS}`);
   if (resp.status === 401) { location.href = "/login"; return; }
   const d = await resp.json();
   statsLoaded = true;
   chartBase();
 
-  const s = d.summary;
-  $("summary-cards").innerHTML =
-    card(s.latest_weight_kg != null ? s.latest_weight_kg + " kg" : "—", "Latest weight") +
-    card(s.latest_fat_pct != null ? s.latest_fat_pct + "%" : "—", "Body fat") +
-    card(s.training_days_7d, "Training days (7d)") +
-    card(s.cardio_km_7d + " km", "Cardio (7d)") +
-    card(s.tonnage_7d_kg.toLocaleString(), "Tonnage 7d (kg)") +
-    card(s.lift_sessions_7d, "Lift sessions (7d)");
+  const s = d.summary || {};
+  const body = d.body || [];
+  const strengthWeekly = d.strength_weekly || [];
+  const cardioWeekly = d.cardio_weekly || [];
+  const hasData = body.length || strengthWeekly.length || cardioWeekly.length;
+  renderStatsMeta(s, hasData);
 
-  const hasData = d.body.length || d.strength_weekly.length || d.cardio_weekly.length;
+  $("summary-cards").innerHTML = [
+    card(
+      s.latest_weight_kg != null ? `${formatNumber(s.latest_weight_kg, { maximumFractionDigits: 1 })} kg` : "--",
+      "Latest weight",
+      s.latest_weigh_in ? `Logged ${fmtShortDate(s.latest_weigh_in)}` : "No weigh-in yet",
+      "primary"
+    ),
+    card(
+      s.latest_fat_pct != null ? `${formatNumber(s.latest_fat_pct, { maximumFractionDigits: 1 })}%` : "--",
+      "Body fat",
+      "Current estimate",
+      "amber"
+    ),
+    card(
+      formatNumber(s.training_days_7d),
+      "Training days",
+      "Past 7 days",
+      "green"
+    ),
+    card(
+      formatUnit(s.cardio_km_7d, "km", { maximumFractionDigits: 1 }),
+      "Cardio",
+      "Past 7 days",
+      "green"
+    ),
+    card(
+      formatUnit(s.tonnage_7d_kg, "kg"),
+      "Tonnage",
+      "Past 7 days",
+      "primary"
+    ),
+    card(
+      formatNumber(s.lift_sessions_7d),
+      "Lift sessions",
+      "Past 7 days"
+    ),
+  ].join("");
+
   $("stats-empty").hidden = !!hasData;
 
   draw("weight", {
     type: "line",
     data: {
-      labels: d.body.map((r) => r.date),
-      datasets: [{ data: d.body.map((r) => r.weight_kg), borderColor: ACCENT,
-        backgroundColor: "transparent", tension: 0.3, spanGaps: true, pointRadius: 0 }],
+      labels: body.map((r) => r.date),
+      datasets: [{
+        data: body.map((r) => r.weight_kg),
+        borderColor: ACCENT,
+        backgroundColor: "rgba(79, 140, 255, 0.14)",
+        tension: 0.3,
+        spanGaps: true,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        fill: true,
+      }],
     },
-    options: { plugins: { legend: { display: false } }, scales: axes() },
+    options: chartOptions(),
   });
 
   draw("body", {
     type: "line",
     data: {
-      labels: d.body.map((r) => r.date),
+      labels: body.map((r) => r.date),
       datasets: [
-        { label: "Muscle", data: d.body.map((r) => r.muscle_mass_kg), borderColor: "#46c98b",
-          backgroundColor: "transparent", tension: 0.3, spanGaps: true, pointRadius: 0 },
-        { label: "Fat", data: d.body.map((r) => r.fat_mass_kg), borderColor: "#e0a23b",
-          backgroundColor: "transparent", tension: 0.3, spanGaps: true, pointRadius: 0 },
+        {
+          label: "Muscle",
+          data: body.map((r) => r.muscle_mass_kg),
+          borderColor: "#46c98b",
+          backgroundColor: "transparent",
+          tension: 0.3,
+          spanGaps: true,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+        },
+        {
+          label: "Fat",
+          data: body.map((r) => r.fat_mass_kg),
+          borderColor: "#e0a23b",
+          backgroundColor: "transparent",
+          tension: 0.3,
+          spanGaps: true,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+        },
       ],
     },
-    options: { plugins: { legend: { labels: { boxWidth: 12 } } }, scales: axes() },
+    options: chartOptions({ legend: true }),
   });
 
   draw("tonnage", {
     type: "bar",
     data: {
-      labels: d.strength_weekly.map((r) => r.week),
-      datasets: [{ data: d.strength_weekly.map((r) => r.tonnage_kg), backgroundColor: ACCENT }],
+      labels: strengthWeekly.map((r) => r.week),
+      datasets: [{
+        data: strengthWeekly.map((r) => r.tonnage_kg),
+        backgroundColor: ACCENT,
+        borderRadius: 5,
+        barPercentage: 0.72,
+        categoryPercentage: 0.74,
+      }],
     },
-    options: { plugins: { legend: { display: false } }, scales: axes({ beginAtZero: true }) },
+    options: chartOptions({ y: { beginAtZero: true } }),
   });
 
   draw("cardio", {
     type: "bar",
     data: {
-      labels: d.cardio_weekly.map((r) => r.week),
-      datasets: [{ data: d.cardio_weekly.map((r) => r.distance_km), backgroundColor: "#46c98b" }],
+      labels: cardioWeekly.map((r) => r.week),
+      datasets: [{
+        data: cardioWeekly.map((r) => r.distance_km),
+        backgroundColor: "#46c98b",
+        borderRadius: 5,
+        barPercentage: 0.72,
+        categoryPercentage: 0.74,
+      }],
     },
-    options: { plugins: { legend: { display: false } }, scales: axes({ beginAtZero: true }) },
+    options: chartOptions({ y: { beginAtZero: true } }),
   });
 }
 
