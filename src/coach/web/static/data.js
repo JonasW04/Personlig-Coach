@@ -113,6 +113,25 @@
     };
   }
 
+  function bucketKeyFor(dateStr, daily) {
+    if (daily) return dateStr;
+    const d = parse(dateStr);
+    const off = (d.getDay() + 6) % 7;
+    return iso(addDays(d, -off));
+  }
+
+  function bucketKeys(start, end, daily) {
+    const step = daily ? 1 : 7;
+    const keys = [];
+    let cur = daily ? parse(start) : parse(bucketKeyFor(start, false));
+    const last = daily ? parse(end) : parse(bucketKeyFor(end, false));
+    while (cur <= last) {
+      keys.push(iso(cur));
+      cur = addDays(cur, step);
+    }
+    return keys;
+  }
+
   // consecutive active days counting back from `end` (inclusive)
   function currentStreak(end) {
     const map = new Map(DB.map((d) => [d.date, d]));
@@ -132,19 +151,39 @@
     const daily = span <= 35;
     const rows = slice(start, end);
     const buckets = new Map();
-    const order = [];
-    function keyFor(dateStr) {
-      if (daily) return dateStr;
-      const d = parse(dateStr);
-      const off = (d.getDay() + 6) % 7;
-      return iso(addDays(d, -off));
-    }
+    const emptyBucket = (key) => ({ key, tonnage: 0, km: 0, strengthMin: 0, cardioMin: 0, sets: 0 });
+    const order = bucketKeys(start, end, daily);
+    for (const k of order) buckets.set(k, emptyBucket(k));
     for (const d of rows) {
-      const k = keyFor(d.date);
-      if (!buckets.has(k)) { buckets.set(k, { key: k, tonnage: 0, km: 0, strengthMin: 0, cardioMin: 0, sets: 0 }); order.push(k); }
+      const k = bucketKeyFor(d.date, daily);
+      if (!buckets.has(k)) { buckets.set(k, emptyBucket(k)); order.push(k); }
       const b = buckets.get(k);
       if (d.strength) { b.tonnage += d.strength.tonnage; b.strengthMin += d.strength.minutes; b.sets += d.strength.sets; }
       if (d.cardio) { b.km += d.cardio.km; b.cardioMin += d.cardio.minutes; }
+    }
+    return { daily, points: order.map((k) => buckets.get(k)) };
+  }
+
+  function bodySeries(start, end) {
+    const span = daysBetween(start, end) + 1;
+    const daily = span <= 35;
+    const rows = bodySlice(start, end);
+    const order = bucketKeys(start, end, daily);
+    const buckets = new Map(order.map((k) => [k, {
+      key: k,
+      weight_kg: null,
+      fat_ratio_pct: null,
+      fat_mass_kg: null,
+      fat_free_mass_kg: null,
+      muscle_mass_kg: null,
+    }]));
+    for (const row of rows) {
+      const k = bucketKeyFor(row.date, daily);
+      if (!buckets.has(k)) {
+        buckets.set(k, { key: k });
+        order.push(k);
+      }
+      Object.assign(buckets.get(k), row, { key: k });
     }
     return { daily, points: order.map((k) => buckets.get(k)) };
   }
@@ -179,6 +218,42 @@
       pts.push({ date: d.date, volume: Math.round(volume), reps, topWeight: top, e1rm: Math.round(e1rm) });
     }
     return pts;
+  }
+
+  function exerciseTrend(name, start, end) {
+    const span = daysBetween(start, end) + 1;
+    const daily = span <= 35;
+    const rows = slice(start, end);
+    const emptyBucket = (key) => ({ key, volume: 0, reps: null, topWeight: null, e1rm: null, sessions: 0 });
+    const order = bucketKeys(start, end, daily);
+    const buckets = new Map();
+    for (const k of order) buckets.set(k, emptyBucket(k));
+
+    for (const d of rows) {
+      if (!d.strength) continue;
+      const ex = d.strength.exercises.find((e) => e.name === name);
+      if (!ex) continue;
+
+      const k = bucketKeyFor(d.date, daily);
+      if (!buckets.has(k)) { buckets.set(k, emptyBucket(k)); order.push(k); }
+      const bucket = buckets.get(k);
+      let volume = 0, reps = 0, top = 0, e1rm = 0;
+      for (const s of ex.sets) {
+        const w = s.weight || 0;
+        volume += s.reps * w;
+        reps += s.reps;
+        if (w > top) top = w;
+        const est = w * (1 + s.reps / 30);
+        if (est > e1rm) e1rm = est;
+      }
+      bucket.volume += Math.round(volume);
+      bucket.reps = (bucket.reps || 0) + reps;
+      bucket.topWeight = Math.max(bucket.topWeight || 0, top);
+      bucket.e1rm = Math.max(bucket.e1rm || 0, Math.round(e1rm));
+      bucket.sessions += 1;
+    }
+
+    return { daily, points: order.map((k) => buckets.get(k)) };
   }
 
   // day type for calendar: 'none' | 'strength' | 'cardio' | 'both'
@@ -256,8 +331,8 @@
 
   const api = {
     DB, BODY, TODAY, iso, parse, addDays, daysBetween,
-    rangeBounds, summarize, series, exerciseList, exerciseSeries,
-    bodySlice, latestBody,
+    rangeBounds, summarize, series, exerciseList, exerciseSeries, exerciseTrend,
+    bodySlice, latestBody, bodySeries,
     calendarMonth, heatmap, dayType, monthsAvailable,
     firstDate, lastDate,
     load,

@@ -134,13 +134,13 @@
     const values = rows.map((r) => r[key]).filter((v) => v != null);
     return values.length ? Math.min(...values) : null;
   }
-  function bodyWeightChart(canvas, rows) {
+  function bodyWeightChart(canvas, ser) {
     const C = CC().THEME;
-    const pts = rows.filter((r) => r.weight_kg != null);
+    const pts = ser.points;
     CC().mount(canvas, {
       type: "line",
       data: {
-        labels: pts.map((p) => CC().fmtLabel(p.date, true)),
+        labels: pts.map((p) => CC().fmtLabel(p.key, ser.daily)),
         datasets: [CC().lineDataset("Weight", pts.map((p) => p.weight_kg), C.strength, true)],
       },
       options: CC().options({
@@ -150,13 +150,13 @@
       }),
     });
   }
-  function bodyCompositionChart(canvas, rows) {
+  function bodyCompositionChart(canvas, ser) {
     const C = CC().THEME;
-    const pts = rows.filter((r) => r.muscle_mass_kg != null || r.fat_mass_kg != null);
+    const pts = ser.points;
     CC().mount(canvas, {
       type: "line",
       data: {
-        labels: pts.map((p) => CC().fmtLabel(p.date, true)),
+        labels: pts.map((p) => CC().fmtLabel(p.key, ser.daily)),
         datasets: [
           CC().lineDataset("Muscle", pts.map((p) => p.muscle_mass_kg), C.good, false),
           CC().lineDataset("Fat", pts.map((p) => p.fat_mass_kg), "#e0a23b", false),
@@ -173,6 +173,7 @@
   function buildBodySection(range) {
     const C = CC().THEME;
     const rows = D().bodySlice(range.start, range.end);
+    const ser = D().bodySeries(range.start, range.end);
     const latest = rows.length ? rows[rows.length - 1] : null;
     const weightId = nid("body-weight");
     const compId = nid("body-comp");
@@ -218,8 +219,8 @@
           </div>
         </div>`,
       mount(root) {
-        bodyWeightChart(root.querySelector("#" + weightId), rows);
-        bodyCompositionChart(root.querySelector("#" + compId), rows);
+        bodyWeightChart(root.querySelector("#" + weightId), ser);
+        bodyCompositionChart(root.querySelector("#" + compId), ser);
       },
     };
   }
@@ -239,7 +240,7 @@
       <div class="panel-head ex-head">
         <div>
           <h3>Per-exercise progress</h3>
-          <div class="sub">Reps & volume per session</div>
+          <div class="sub">Reps & volume over time</div>
         </div>
         <div class="ex-select-wrap">
           <select class="ex-select" id="${selId}">
@@ -261,11 +262,21 @@
 
     function update(name) {
       const pts = D().exerciseSeries(name, range.start, range.end);
+      const trend = D().exerciseTrend(name, range.start, range.end);
+      const trendLabels = trend.points.map((p) => CC().fmtLabel(p.key, trend.daily));
       const statEl = mountEl.querySelector("#" + statId);
       if (!pts.length) {
         statEl.innerHTML = `<div class="ex-stat"><div class="l">No ${name} sessions in this range</div></div>`;
-        CC().mount(mountEl.querySelector("#" + volId), { type: "bar", data: { labels: [], datasets: [] }, options: CC().options() });
-        CC().mount(mountEl.querySelector("#" + repsId), { type: "bar", data: { labels: [], datasets: [] }, options: CC().options() });
+        CC().mount(mountEl.querySelector("#" + volId), {
+          type: "bar",
+          data: { labels: trendLabels, datasets: [CC().barDataset("Volume", trend.points.map((p) => p.volume), C.strength, { radius: 4 })] },
+          options: CC().options({ y: { ticks: { callback: kFmt } }, xTicks: 8 }),
+        });
+        CC().mount(mountEl.querySelector("#" + repsId), {
+          type: "line",
+          data: { labels: trendLabels, datasets: [CC().lineDataset("Reps", trend.points.map((p) => p.reps), C.good, true)] },
+          options: CC().options({ xTicks: 8 }),
+        });
         return;
       }
       const last = pts[pts.length - 1];
@@ -278,15 +289,14 @@
         <div class="ex-stat"><div class="v">${nf(totalReps)}</div><div class="l">Total reps</div></div>
         <div class="ex-stat"><div class="v">${nf(last.topWeight, 1)}<span class="unit">kg</span></div><div class="l">Top set (latest)</div></div>
         <div class="ex-stat"><div class="v">${nf(bestE1rm)}<span class="unit">kg</span></div><div class="l">Best est. 1RM</div></div>`;
-      const labels = pts.map((p) => CC().fmtLabel(p.date, true));
       CC().mount(mountEl.querySelector("#" + volId), {
         type: "bar",
-        data: { labels, datasets: [CC().barDataset("Volume", pts.map((p) => p.volume), C.strength, { radius: 4 })] },
+        data: { labels: trendLabels, datasets: [CC().barDataset("Volume", trend.points.map((p) => p.volume), C.strength, { radius: 4 })] },
         options: CC().options({ y: { ticks: { callback: kFmt } }, xTicks: 8 }),
       });
       CC().mount(mountEl.querySelector("#" + repsId), {
         type: "line",
-        data: { labels, datasets: [CC().lineDataset("Reps", pts.map((p) => p.reps), C.good, true)] },
+        data: { labels: trendLabels, datasets: [CC().lineDataset("Reps", trend.points.map((p) => p.reps), C.good, true)] },
         options: CC().options({ xTicks: 8 }),
       });
     }
