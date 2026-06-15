@@ -13,6 +13,8 @@
     customEnd: null,
     layout: "snapshot", // snapshot | split | activity
     bodyCompositionMode: "mass", // mass | percent
+    predictWeight: false, // project body weight toward target
+    predictFat: false,    // project body fat % toward target
   };
   let uid = 0;
   const nid = (p) => `${p}-${++uid}`;
@@ -385,13 +387,111 @@
     const values = rows.map((r) => r[key]).filter((v) => v != null);
     return values.length ? Math.min(...values) : null;
   }
-  function bodyWeightChart(canvas, ser) {
+
+  // ---------- body trend projection ----------
+  // Least-squares fit of a metric over the measurements in the visible range,
+  // returning the rate of change per day. "Last period" = the selected range,
+  // so a shorter range projects from a more recent rate.
+  const PROJECT_MAX_DAYS = 1825; // don't project a near-flat trend past ~5 years
+  function bodyRegression(rows, key) {
+    const pts = rows.filter((r) => r[key] != null);
+    if (pts.length < 2) return null;
+    const t0 = D().parse(pts[0].date).getTime();
+    const xs = pts.map((p) => (D().parse(p.date).getTime() - t0) / 86400000);
+    const ys = pts.map((p) => p[key]);
+    const n = pts.length;
+    const sx = xs.reduce((a, b) => a + b, 0);
+    const sy = ys.reduce((a, b) => a + b, 0);
+    const sxx = xs.reduce((a, b) => a + b * b, 0);
+    const sxy = xs.reduce((a, b, i) => a + b * ys[i], 0);
+    const denom = n * sxx - sx * sx;
+    if (denom === 0) return null;
+    return { slope: (n * sxy - sx * sy) / denom, last: pts[pts.length - 1] };
+  }
+  function bodyProjection(rows, key, target) {
+    if (target == null) return null;
+    const reg = bodyRegression(rows, key);
+    if (!reg) return null;
+    const lastVal = reg.last[key];
+    const diff = target - lastVal;
+    if (Math.abs(diff) < 1e-6) {
+      return { slope: reg.slope, last: reg.last, lastVal, target, days: 0, eta: D().parse(reg.last.date), reached: true, reachable: true };
+    }
+    const days = reg.slope !== 0 ? diff / reg.slope : Infinity;
+    const reachable = isFinite(days) && days > 0 && days <= PROJECT_MAX_DAYS;
+    const eta = reachable ? D().addDays(D().parse(reg.last.date), Math.round(days)) : null;
+    return { slope: reg.slope, last: reg.last, lastVal, target, days: reachable ? days : null, eta, reached: false, reachable };
+  }
+  // Extend the chart's category axis with future buckets and build the dashed
+  // projection series (anchored at the last actual point, clamped at target).
+  function projectionOverlay(ser, key, target, proj) {
+    const baseLabels = ser.points.map((p) => CC().fmtLabel(p.key, ser.daily));
+    if (!proj || !proj.reachable) return { labels: baseLabels, futureCount: 0, projData: null };
+    const step = ser.daily ? 1 : 7;
+    const cap = ser.daily ? 180 : 104;
+    const etaTime = proj.eta.getTime();
+    let cur = D().parse(ser.points[ser.points.length - 1].key);
+    const futureKeys = [];
+    while (futureKeys.length < cap) {
+      cur = D().addDays(cur, step);
+      futureKeys.push(D().iso(cur));
+      if (cur.getTime() >= etaTime) break;
+    }
+    const labels = baseLabels.concat(futureKeys.map((k) => CC().fmtLabel(k, ser.daily)));
+    let lastIdx = -1;
+    for (let i = ser.points.length - 1; i >= 0; i--) { if (ser.points[i][key] != null) { lastIdx = i; break; } }
+    const projData = new Array(labels.length).fill(null);
+    if (lastIdx >= 0) {
+      const anchorVal = ser.points[lastIdx][key];
+      const anchorDate = D().parse(ser.points[lastIdx].key);
+      const down = proj.slope < 0;
+      projData[lastIdx] = +anchorVal.toFixed(2);
+      futureKeys.forEach((k, j) => {
+        const daysFrom = (D().parse(k).getTime() - anchorDate.getTime()) / 86400000;
+        let v = anchorVal + proj.slope * daysFrom;
+        v = down ? Math.max(v, target) : Math.min(v, target);
+        projData[ser.points.length + j] = +v.toFixed(2);
+      });
+    }
+    return { labels, futureCount: futureKeys.length, projData };
+  }
+  function projectionDataset(label, data, color) {
+    return {
+      label, data, type: "line",
+      borderColor: CC().alpha(color, 0.9),
+      borderWidth: 2,
+      borderDash: [4, 4],
+      tension: 0,
+      spanGaps: true,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      pointHoverBackgroundColor: color,
+      fill: false,
+      backgroundColor: "transparent",
+    };
+  }
+  function predictionNote(proj, unit) {
+    if (!proj) return "Add at least two measurements to project a trend.";
+    const perWk = proj.slope * 7;
+    const rate = `${perWk > 0 ? "+" : ""}${nf(perWk, 1)}${unit}/wk`;
+    if (proj.reached) return `Already at target · ${rate}`;
+    if (!proj.reachable) return `Not trending toward target · ${rate}`;
+    const dstr = proj.eta.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+    const wks = Math.max(1, Math.round(proj.days / 7));
+    return `On pace to hit target ~ ${dstr} (≈${wks} wk) · ${rate}`;
+  }
+
+  function bodyWeightChart(canvas, ser, opts = {}) {
     const C = CC().THEME;
     const pts = ser.points;
-    const datasets = [CC().lineDataset("Weight", pts.map((p) => p.weight_kg), C.strength, true)];
     const weightTarget = goalTarget("body_weight");
+    const proj = opts.predict ? bodyProjection(opts.rows || [], "weight_kg", weightTarget) : null;
+    const overlay = projectionOverlay(ser, "weight_kg", weightTarget, proj);
+    const actualData = pts.map((p) => p.weight_kg).concat(new Array(overlay.futureCount).fill(null));
+    const datasets = [CC().lineDataset("Weight", actualData, C.strength, true)];
+    if (overlay.projData) datasets.push(projectionDataset("Projection", overlay.projData, C.strength));
     if (weightTarget != null) {
-      datasets.push(targetDataset("Target", weightTarget, pts.length, "#e0a23b"));
+      datasets.push(targetDataset("Target", weightTarget, overlay.labels.length, "#e0a23b"));
     }
     const weightValues = pts.map((p) => p.weight_kg).filter((v) => v != null);
     if (weightTarget != null) weightValues.push(weightTarget);
@@ -399,7 +499,7 @@
     CC().mount(canvas, {
       type: "line",
       data: {
-        labels: pts.map((p) => CC().fmtLabel(p.key, ser.daily)),
+        labels: overlay.labels,
         datasets,
       },
       options: CC().options({
@@ -424,18 +524,23 @@
   function bodyCompositionSubtitle(mode) {
     return mode === "percent" ? "Body fat percentage trend" : "Muscle and fat mass trend";
   }
-  function bodyCompositionChart(canvas, ser, mode = state.bodyCompositionMode) {
+  function bodyCompositionChart(canvas, ser, mode = state.bodyCompositionMode, opts = {}) {
     const C = CC().THEME;
     const pts = ser.points;
-    const labels = pts.map((p) => CC().fmtLabel(p.key, ser.daily));
+    let labels = pts.map((p) => CC().fmtLabel(p.key, ser.daily));
     const datasets = [];
     let values = [];
     let tickUnit = "kg";
 
     if (mode === "percent") {
       const fatTarget = goalTarget("body_fat");
-      datasets.push(CC().lineDataset("Body fat %", pts.map((p) => p.fat_ratio_pct), C.cardio, false));
-      if (fatTarget != null) datasets.push(targetDataset("Target", fatTarget, pts.length, "#f2c46d"));
+      const proj = opts.predict ? bodyProjection(opts.rows || [], "fat_ratio_pct", fatTarget) : null;
+      const overlay = projectionOverlay(ser, "fat_ratio_pct", fatTarget, proj);
+      labels = overlay.labels;
+      const fatData = pts.map((p) => p.fat_ratio_pct).concat(new Array(overlay.futureCount).fill(null));
+      datasets.push(CC().lineDataset("Body fat %", fatData, C.cardio, false));
+      if (overlay.projData) datasets.push(projectionDataset("Projection", overlay.projData, C.cardio));
+      if (fatTarget != null) datasets.push(targetDataset("Target", fatTarget, overlay.labels.length, "#f2c46d"));
       values = pts.map((p) => p.fat_ratio_pct).filter((v) => v != null);
       if (fatTarget != null) values.push(fatTarget);
       tickUnit = "%";
@@ -485,9 +590,12 @@
     const weightChange = bodyDelta(rows, "weight_kg");
     const fatChange = bodyDelta(rows, "fat_ratio_pct");
     const weightTarget = goalTarget("body_weight");
+    const fatTarget = goalTarget("body_fat");
     const weightLegend = weightTarget != null
       ? legendHtml([{ c: C.strength, l: "Weight" }, { c: "#e0a23b", l: "Target" }])
       : `<span class="unit">kg</span>`;
+    const weightSubId = nid("body-weight-sub");
+    const weightSubText = `Latest ${bodyDate(latest.date)} · ${rows.length} measurements`;
     const mode = state.bodyCompositionMode;
     const compositionLegend = legendHtml(bodyCompositionItems(mode));
     const compLegendId = nid("body-comp-legend");
@@ -498,8 +606,11 @@
         <div class="body-grid">
           <div class="panel body-panel">
             <div class="panel-head">
-              <div><h3>Body weight</h3><div class="sub">Latest ${bodyDate(latest.date)} · ${rows.length} measurements</div></div>
-              ${weightLegend}
+              <div><h3>Body weight</h3><div class="sub" id="${weightSubId}">${weightSubText}</div></div>
+              <div class="body-chart-tools">
+                ${weightTarget != null ? `<div class="chart-tabs"><button type="button" class="${state.predictWeight ? "active" : ""}" data-predict-weight>Predict</button></div>` : ""}
+                ${weightLegend}
+              </div>
             </div>
             <div class="body-metrics">
               <div class="body-stat"><div class="v">${nf(latest.weight_kg, 1)}<span class="unit">kg</span></div><div class="l">Latest</div></div>
@@ -516,6 +627,7 @@
                   <button type="button" class="${mode === "mass" ? "active" : ""}" data-body-comp-mode="mass">kg</button>
                   <button type="button" class="${mode === "percent" ? "active" : ""}" data-body-comp-mode="percent">%</button>
                 </div>
+                ${fatTarget != null ? `<div class="chart-tabs"><button type="button" class="${state.predictFat && mode === "percent" ? "active" : ""}" data-predict-fat>Predict</button></div>` : ""}
                 <div id="${compLegendId}">${compositionLegend}</div>
               </div>
             </div>
@@ -528,22 +640,61 @@
           </div>
         </div>`,
       mount(root) {
-        bodyWeightChart(root.querySelector("#" + weightId), ser);
+        // ----- body weight panel (with optional projection) -----
+        const weightCanvas = root.querySelector("#" + weightId);
+        const weightSub = root.querySelector("#" + weightSubId);
+        const weightPredictBtn = root.querySelector("[data-predict-weight]");
+        function renderWeight() {
+          if (weightPredictBtn) weightPredictBtn.classList.toggle("active", state.predictWeight);
+          bodyWeightChart(weightCanvas, ser, { predict: state.predictWeight, rows });
+          if (weightSub) {
+            weightSub.textContent = state.predictWeight
+              ? predictionNote(bodyProjection(rows, "weight_kg", weightTarget), "kg")
+              : weightSubText;
+          }
+        }
+        if (weightPredictBtn) {
+          weightPredictBtn.addEventListener("click", () => {
+            state.predictWeight = !state.predictWeight;
+            renderWeight();
+          });
+        }
+        renderWeight();
+
+        // ----- body composition panel (mode toggle + optional projection) -----
         const compCanvas = root.querySelector("#" + compId);
         const compLegend = root.querySelector("#" + compLegendId);
         const compSub = root.querySelector("#" + compSubId);
-        const buttons = root.querySelectorAll("[data-body-comp-mode]");
-        function renderComposition(mode) {
-          state.bodyCompositionMode = mode;
-          buttons.forEach((button) => button.classList.toggle("active", button.dataset.bodyCompMode === mode));
+        const modeButtons = root.querySelectorAll("[data-body-comp-mode]");
+        const fatPredictBtn = root.querySelector("[data-predict-fat]");
+        function renderComposition() {
+          const mode = state.bodyCompositionMode;
+          const predicting = state.predictFat && mode === "percent";
+          modeButtons.forEach((button) => button.classList.toggle("active", button.dataset.bodyCompMode === mode));
+          if (fatPredictBtn) fatPredictBtn.classList.toggle("active", predicting);
           if (compLegend) compLegend.innerHTML = legendHtml(bodyCompositionItems(mode));
-          if (compSub) compSub.textContent = bodyCompositionSubtitle(mode);
-          bodyCompositionChart(compCanvas, ser, mode);
+          if (compSub) {
+            compSub.textContent = predicting
+              ? predictionNote(bodyProjection(rows, "fat_ratio_pct", fatTarget), "%")
+              : bodyCompositionSubtitle(mode);
+          }
+          bodyCompositionChart(compCanvas, ser, mode, { predict: predicting, rows });
         }
-        buttons.forEach((button) => {
-          button.addEventListener("click", () => renderComposition(button.dataset.bodyCompMode));
+        modeButtons.forEach((button) => {
+          button.addEventListener("click", () => {
+            state.bodyCompositionMode = button.dataset.bodyCompMode;
+            if (state.bodyCompositionMode !== "percent") state.predictFat = false; // projection only applies to fat %
+            renderComposition();
+          });
         });
-        renderComposition(state.bodyCompositionMode);
+        if (fatPredictBtn) {
+          fatPredictBtn.addEventListener("click", () => {
+            state.predictFat = !state.predictFat;
+            if (state.predictFat) state.bodyCompositionMode = "percent"; // target is fat %, so show that view
+            renderComposition();
+          });
+        }
+        renderComposition();
       },
     };
   }
