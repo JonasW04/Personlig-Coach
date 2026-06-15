@@ -125,11 +125,35 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   line-height: 1.15;
   font-weight: 700;
 }
+.stats-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
 .stats-meta {
   max-width: 48%;
   color: var(--muted);
   font-size: 13px;
   text-align: right;
+}
+.secondary {
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.secondary:hover { border-color: var(--accent); }
+.secondary:disabled {
+  opacity: 0.58;
+  cursor: default;
 }
 .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .card {
@@ -240,6 +264,11 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
     align-items: flex-start;
     flex-direction: column;
     gap: 6px;
+  }
+  .stats-actions {
+    width: 100%;
+    align-items: flex-start;
+    justify-content: space-between;
   }
   .stats-meta {
     max-width: none;

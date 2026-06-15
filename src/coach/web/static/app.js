@@ -11,6 +11,7 @@ const $ = (id) => document.getElementById(id);
 const TITLES = { chat: "Coach", stats: "Dashboard", reports: "Reviews" };
 let currentView = "chat";
 let statsLoaded = false;
+let syncPromise = null;
 
 function switchView(view) {
   currentView = view;
@@ -123,6 +124,9 @@ const PANEL = "#171a21";
 const TEXT = "#e7eaf0";
 const STATS_WINDOW_WEEKS = 12;
 const charts = {};
+const syncButton = $("sync-data");
+let statsMetaText = "Loading stats...";
+let syncStatusText = "";
 
 function chartBase() {
   Chart.defaults.color = MUTED;
@@ -201,11 +205,59 @@ function card(value, label, meta, tone = "") {
     `</article>`
   );
 }
+function updateStatsMeta() {
+  const text = [statsMetaText, syncStatusText].filter(Boolean).join(" | ");
+  $("stats-meta").textContent = text || "Waiting for synced data";
+}
 function renderStatsMeta(summary, hasData) {
   const parts = [];
   if (summary.latest_weigh_in) parts.push(`Last weigh-in ${fmtShortDate(summary.latest_weigh_in)}`);
   if (hasData) parts.push(`${STATS_WINDOW_WEEKS} weeks synced`);
-  $("stats-meta").textContent = parts.join(" | ") || "Waiting for synced data";
+  statsMetaText = parts.join(" | ") || "Waiting for synced data";
+  updateStatsMeta();
+}
+function setSyncStatus(text) {
+  syncStatusText = text;
+  updateStatsMeta();
+}
+function syncSummary(data) {
+  if (data.running) return data.message || "Sync already running.";
+  const results = data.results || [];
+  const synced = results.filter((r) => r.status === "synced");
+  if (!synced.length) return "Sync complete";
+  return `Updated ${synced.map((r) => r.source).join(", ")}`;
+}
+async function syncData({ silent = false } = {}) {
+  if (syncPromise) return syncPromise;
+
+  const label = syncButton.textContent;
+  syncButton.disabled = true;
+  syncButton.textContent = "Syncing...";
+  setSyncStatus(silent ? "Updating in background..." : "Syncing data...");
+
+  syncPromise = (async () => {
+    try {
+      const resp = await fetch("/api/sync", { method: "POST" });
+      if (resp.status === 401) { location.href = "/login"; return; }
+      const data = await resp.json();
+      if (!resp.ok && resp.status !== 202) throw new Error(data.detail || `HTTP ${resp.status}`);
+
+      setSyncStatus(syncSummary(data));
+      if (resp.status !== 202 && currentView === "stats") await loadStats();
+    } catch (err) {
+      if (currentView === "stats" || !silent) {
+        setSyncStatus(`Sync failed: ${err.message}`);
+      } else {
+        setSyncStatus("");
+      }
+    } finally {
+      syncButton.disabled = false;
+      syncButton.textContent = label;
+      syncPromise = null;
+    }
+  })();
+
+  return syncPromise;
 }
 
 async function loadStats() {
@@ -341,6 +393,8 @@ async function loadStats() {
   });
 }
 
+syncButton.addEventListener("click", () => syncData());
+
 // ---------- reports ----------
 let reportKind = "readiness";
 const reportsList = $("reports-list");
@@ -410,6 +464,7 @@ generateBtn.addEventListener("click", async () => {
 // ---------- boot ----------
 showEmptyState();
 switchView("chat");
+syncData({ silent: true });
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js"));
