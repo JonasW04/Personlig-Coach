@@ -190,12 +190,11 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 
 # ------------------------------------------------------------------------- stats
 @app.get("/api/stats")
-async def get_stats(weeks: int = 12) -> dict:
-    weeks = max(1, min(weeks, 104))
-    return await asyncio.to_thread(stats.dashboard, weeks)
+async def get_stats(start: str | None = None, end: str | None = None) -> dict:
+    return await asyncio.to_thread(stats.activity, start, end)
 
 
-@app.post("/api/sync")
+@app.post("/api/sync", response_model=None)
 async def sync_data() -> JSONResponse | dict:
     if sync_lock.locked():
         return JSONResponse(
