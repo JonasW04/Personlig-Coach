@@ -69,7 +69,7 @@ async def exercise_progression(args) -> dict:
         ).all()
 
     def get_closest_weight(target_dt: datetime) -> float:
-        if not bws:
+        if not bws or not target_dt:
             return 0.0
         closest = min(bws, key=lambda x: abs((x[0] - target_dt).total_seconds()))
         return closest[1]
@@ -79,7 +79,7 @@ async def exercise_progression(args) -> dict:
     for dt, weight, reps, title in rows:
         if reps is None:
             continue
-            
+
         if weight is None or weight == 0.0:
             weight = get_closest_weight(dt)
             
@@ -123,7 +123,7 @@ async def weekly_volume(args) -> dict:
         ).all()
 
     def get_closest_weight(target_dt: datetime) -> float:
-        if not bws:
+        if not bws or not target_dt:
             return 0.0
         # If target_dt is naive, and measured_at is aware (or vice-versa), total_seconds() will crash.
         # But both should be timezone-aware according to models.py DateTime(timezone=True).
@@ -138,7 +138,7 @@ async def weekly_volume(args) -> dict:
         key = f"{iso.year}-W{iso.week:02d}"
         bucket = agg.setdefault(key, {"week": key, "sets": 0, "tonnage_kg": 0.0})
         bucket["sets"] += 1
-        
+
         if weight is None or weight == 0.0:
             weight = get_closest_weight(dt)
 

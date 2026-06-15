@@ -7,7 +7,7 @@ charts) is derived client-side in ``static/data.js``.
 """
 from __future__ import annotations
 
-from datetime import date as _date
+from datetime import date as _date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -45,7 +45,7 @@ def activity(start: str | None = None, end: str | None = None) -> dict:
             .where(BodyMeasurement.weight_kg.is_not(None))
         ).all()
 
-        def get_closest_weight(target_dt) -> float:
+        def get_closest_weight(target_dt: datetime) -> float:
             if not bws or not target_dt:
                 return 0.0
             closest = min(bws, key=lambda x: abs((x[0] - target_dt).total_seconds()))
