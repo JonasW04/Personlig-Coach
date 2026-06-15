@@ -690,6 +690,11 @@
   function render() {
     const content = document.getElementById("stats-content");
     if (!content) return;
+    // Replacing #stats-content's innerHTML collapses it to zero height, which
+    // resets the scroll container to the top. Capture the scroll position first
+    // and restore it after the rebuild so range changes / syncs stay put.
+    const scroller = content.closest(".stats-scroll");
+    const prevScroll = scroller ? scroller.scrollTop : 0;
     CC().base();
     CC().destroyAll();
     const range = resolveRange();
@@ -699,6 +704,12 @@
     const sub = document.getElementById("stats-range-label");
     if (sub) sub.textContent = rangeLabel(range);
     (LAYOUTS[state.layout] || layoutSnapshot)(content, { s, prev, ser, range });
+    if (scroller && prevScroll) {
+      // Restore synchronously, then again after layout settles (the browser
+      // clamps to the new max if the rebuilt content is shorter).
+      scroller.scrollTop = prevScroll;
+      requestAnimationFrame(() => { scroller.scrollTop = prevScroll; });
+    }
   }
 
   // ---------- controls wiring ----------
