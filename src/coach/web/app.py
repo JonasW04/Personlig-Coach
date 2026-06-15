@@ -195,7 +195,7 @@ async def get_stats(weeks: int = 12) -> dict:
     return await asyncio.to_thread(stats.dashboard, weeks)
 
 
-@app.post("/api/sync")
+@app.post("/api/sync", response_model=None)
 async def sync_data() -> JSONResponse | dict:
     if sync_lock.locked():
         return JSONResponse(
