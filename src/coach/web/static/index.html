@@ -70,7 +70,11 @@
       <button data-kind="readiness" class="active">Daily readiness</button>
       <button data-kind="weekly">Weekly review</button>
     </div>
-    <button id="generate" class="primary">Generate now</button>
+    <div class="reports-actions">
+      <button id="generate" class="primary">Generate now</button>
+      <button id="push-toggle" class="secondary" type="button" hidden>Enable notifications</button>
+    </div>
+    <div id="push-status" class="status-line" aria-live="polite"></div>
     <div id="reports-list"></div>
   </section>
 

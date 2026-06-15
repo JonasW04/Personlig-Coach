@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     notion_api_key: str = ""
     notion_parent_page_id: str = ""
 
+    # Web Push notifications for installed PWAs. Generate VAPID keys once and keep
+    # them stable; changing keys invalidates existing browser subscriptions.
+    web_push_vapid_public_key: str = ""
+    web_push_vapid_private_key: str = ""
+    web_push_vapid_subject: str = "mailto:coach@example.com"
+
     # Web app auth (single user). APP_PASSWORD gates login; SESSION_SECRET signs
     # the session cookie (set a long random value in production).
     app_username: str = "me"
