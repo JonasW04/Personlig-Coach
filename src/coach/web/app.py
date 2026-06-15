@@ -135,7 +135,7 @@ DEFAULT_GOALS = [
         "metric": "body_weight",
         "target_value": None,
         "unit": "kg",
-        "direction": "toward",
+        "direction": "at_most",
         "scope": "Latest",
     },
     {

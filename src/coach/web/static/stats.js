@@ -12,6 +12,7 @@
     customStart: null,
     customEnd: null,
     layout: "snapshot", // snapshot | split | activity
+    bodyCompositionMode: "mass", // mass | percent
   };
   let uid = 0;
   const nid = (p) => `${p}-${++uid}`;
@@ -379,42 +380,56 @@
       }),
     });
   }
-  function bodyCompositionChart(canvas, ser) {
+  function bodyCompositionItems(mode) {
+    const C = CC().THEME;
+    const items = mode === "percent"
+      ? [{ c: C.cardio, l: "Body fat %" }]
+      : [{ c: C.good, l: "Muscle" }, { c: "#e0a23b", l: "Fat mass" }];
+    if (mode === "percent" && goalTarget("body_fat") != null) items.push({ c: "#f2c46d", l: "Target" });
+    return items;
+  }
+  function bodyCompositionSubtitle(mode) {
+    return mode === "percent" ? "Body fat percentage trend" : "Muscle and fat mass trend";
+  }
+  function bodyCompositionChart(canvas, ser, mode = state.bodyCompositionMode) {
     const C = CC().THEME;
     const pts = ser.points;
-    const datasets = [
-      CC().lineDataset("Muscle", pts.map((p) => p.muscle_mass_kg), C.good, false),
-      CC().lineDataset("Fat mass", pts.map((p) => p.fat_mass_kg), "#e0a23b", false),
-      { ...CC().lineDataset("Body fat %", pts.map((p) => p.fat_ratio_pct), C.cardio, false), yAxisID: "yPct" },
-    ];
-    const fatTarget = goalTarget("body_fat");
-    if (fatTarget != null) {
-      datasets.push(targetDataset("Fat % target", fatTarget, pts.length, "#f2c46d", "yPct"));
+    const labels = pts.map((p) => CC().fmtLabel(p.key, ser.daily));
+    const datasets = [];
+    let values = [];
+    let tickUnit = "kg";
+
+    if (mode === "percent") {
+      const fatTarget = goalTarget("body_fat");
+      datasets.push(CC().lineDataset("Body fat %", pts.map((p) => p.fat_ratio_pct), C.cardio, false));
+      if (fatTarget != null) datasets.push(targetDataset("Target", fatTarget, pts.length, "#f2c46d"));
+      values = pts.map((p) => p.fat_ratio_pct).filter((v) => v != null);
+      if (fatTarget != null) values.push(fatTarget);
+      tickUnit = "%";
+    } else {
+      datasets.push(
+        CC().lineDataset("Muscle", pts.map((p) => p.muscle_mass_kg), C.good, false),
+        CC().lineDataset("Fat mass", pts.map((p) => p.fat_mass_kg), "#e0a23b", false),
+      );
+      values = pts.flatMap((p) => [p.muscle_mass_kg, p.fat_mass_kg]).filter((v) => v != null);
     }
-    const pctValues = pts.map((p) => p.fat_ratio_pct).filter((v) => v != null);
-    if (fatTarget != null) pctValues.push(fatTarget);
-    const pctPad = pctValues.length ? Math.max(0.5, (Math.max(...pctValues) - Math.min(...pctValues)) * 0.25) : 1;
-    const opts = CC().options({
-      beginAtZero: false,
-      xTicks: 7,
-      y: { ticks: { callback: (v) => v + " kg" } },
-    });
-    opts.scales.yPct = {
-      position: "right",
-      grid: { drawOnChartArea: false },
-      border: { display: false },
-      ticks: { color: C.faint, padding: 8, maxTicksLimit: 5, callback: (v) => v + "%" },
-      suggestedMin: pctValues.length ? Math.min(...pctValues) - pctPad : undefined,
-      suggestedMax: pctValues.length ? Math.max(...pctValues) + pctPad : undefined,
-      beginAtZero: false,
-    };
+
+    const pad = values.length ? Math.max(tickUnit === "%" ? 0.5 : 0.8, (Math.max(...values) - Math.min(...values)) * 0.22) : 1;
     CC().mount(canvas, {
       type: "line",
       data: {
-        labels: pts.map((p) => CC().fmtLabel(p.key, ser.daily)),
+        labels,
         datasets,
       },
-      options: opts,
+      options: CC().options({
+        beginAtZero: false,
+        xTicks: 7,
+        y: {
+          suggestedMin: values.length ? Math.min(...values) - pad : undefined,
+          suggestedMax: values.length ? Math.max(...values) + pad : undefined,
+          ticks: { callback: (v) => tickUnit === "%" ? v + "%" : v + " kg" },
+        },
+      }),
     });
   }
 
@@ -440,9 +455,10 @@
     const weightLegend = weightTarget != null
       ? legendHtml([{ c: C.strength, l: "Weight" }, { c: "#e0a23b", l: "Target" }])
       : `<span class="unit">kg</span>`;
-    const compositionItems = [{ c: C.good, l: "Muscle" }, { c: "#e0a23b", l: "Fat mass" }, { c: C.cardio, l: "Body fat %" }];
-    if (goalTarget("body_fat") != null) compositionItems.push({ c: "#f2c46d", l: "Target" });
-    const compositionLegend = legendHtml(compositionItems);
+    const mode = state.bodyCompositionMode;
+    const compositionLegend = legendHtml(bodyCompositionItems(mode));
+    const compLegendId = nid("body-comp-legend");
+    const compSubId = nid("body-comp-sub");
     return {
       html: `
         <div class="section-title"><h3>Body</h3><div class="rule"></div></div>
@@ -461,8 +477,14 @@
           </div>
           <div class="panel body-panel">
             <div class="panel-head">
-              <div><h3>Body composition</h3><div class="sub">Muscle and fat mass trend</div></div>
-              ${compositionLegend}
+              <div><h3>Body composition</h3><div class="sub" id="${compSubId}">${bodyCompositionSubtitle(mode)}</div></div>
+              <div class="body-chart-tools">
+                <div class="chart-tabs" role="group" aria-label="Body composition chart mode">
+                  <button type="button" class="${mode === "mass" ? "active" : ""}" data-body-comp-mode="mass">kg</button>
+                  <button type="button" class="${mode === "percent" ? "active" : ""}" data-body-comp-mode="percent">%</button>
+                </div>
+                <div id="${compLegendId}">${compositionLegend}</div>
+              </div>
             </div>
             <div class="body-metrics">
               <div class="body-stat"><div class="v">${nf(latest.fat_ratio_pct, 1)}<span class="unit">%</span></div><div class="l">Body fat</div></div>
@@ -474,7 +496,21 @@
         </div>`,
       mount(root) {
         bodyWeightChart(root.querySelector("#" + weightId), ser);
-        bodyCompositionChart(root.querySelector("#" + compId), ser);
+        const compCanvas = root.querySelector("#" + compId);
+        const compLegend = root.querySelector("#" + compLegendId);
+        const compSub = root.querySelector("#" + compSubId);
+        const buttons = root.querySelectorAll("[data-body-comp-mode]");
+        function renderComposition(mode) {
+          state.bodyCompositionMode = mode;
+          buttons.forEach((button) => button.classList.toggle("active", button.dataset.bodyCompMode === mode));
+          if (compLegend) compLegend.innerHTML = legendHtml(bodyCompositionItems(mode));
+          if (compSub) compSub.textContent = bodyCompositionSubtitle(mode);
+          bodyCompositionChart(compCanvas, ser, mode);
+        }
+        buttons.forEach((button) => {
+          button.addEventListener("click", () => renderComposition(button.dataset.bodyCompMode));
+        });
+        renderComposition(state.bodyCompositionMode);
       },
     };
   }
