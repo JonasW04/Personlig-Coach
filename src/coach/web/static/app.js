@@ -234,8 +234,17 @@ function renderFocusCard(profile) {
 
 function startFocusRegenPoll() {
   if (_focusRegenPoll) return;
-  setFocusStatus("Updating your coaching… regenerating reports");
+  setFocusStatus("Updating your coaching… regenerating reports (this takes a few minutes)");
+  let _pollCount = 0;
+  const MAX_POLLS = 60; // 15 min at 15 s each
   _focusRegenPoll = setInterval(async () => {
+    _pollCount++;
+    if (_pollCount > MAX_POLLS) {
+      clearInterval(_focusRegenPoll);
+      _focusRegenPoll = null;
+      setFocusStatus("Report regeneration timed out — try refreshing the page.");
+      return;
+    }
     try {
       const resp = await fetch("/api/focus");
       if (!resp.ok) return;
@@ -250,7 +259,7 @@ function startFocusRegenPoll() {
         loadPlan();
       }
     } catch (_) { /* ignore */ }
-  }, 5000);
+  }, 15000); // poll every 15 s — multi-agent generation takes several minutes
 }
 
 async function loadFocus() {
