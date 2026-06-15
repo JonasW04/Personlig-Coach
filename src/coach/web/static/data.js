@@ -334,19 +334,35 @@
   }
 
   const MUSCLE_ORDER = ["Chest", "Back", "Quads", "Hamstrings", "Shoulders", "Arms", "Core", "Other"];
+  // Terms are matched on word boundaries against a separator-normalised name,
+  // so "pull up", "pull-up" and "pullup" all match, while "lat" does NOT leak
+  // into "lateral". First matching group wins, so order is significant.
   const MUSCLE_RULES = [
-    ["Chest", ["bench", "chest", "dip", "fly", "push-up", "push up"]],
-    ["Back", ["row", "pull-up", "pullup", "chin-up", "chinup", "lat", "pulldown"]],
-    ["Quads", ["squat", "leg press", "lunge", "split squat", "leg extension"]],
-    ["Hamstrings", ["deadlift", "romanian", "rdl", "leg curl", "hip thrust", "glute"]],
-    ["Shoulders", ["overhead", "shoulder", "lateral raise", "front raise", "rear delt", "press"]],
-    ["Arms", ["curl", "triceps", "biceps", "skullcrusher", "extension", "pushdown"]],
-    ["Core", ["plank", "crunch", "sit-up", "situp", "hanging leg", "ab wheel", "pallof"]],
+    ["Chest", ["bench", "chest", "pec", "fly", "flye", "dip", "push up", "pushup"]],
+    ["Back", ["row", "pull up", "pullup", "chin up", "chinup", "lat", "lats", "pulldown",
+              "pullover", "shrug", "rack pull", "back extension"]],
+    ["Quads", ["squat", "leg press", "lunge", "split squat", "leg extension", "hack",
+               "step up", "stepup"]],
+    ["Hamstrings", ["deadlift", "romanian", "rdl", "leg curl", "hamstring", "hip thrust",
+                    "glute", "good morning"]],
+    ["Shoulders", ["overhead", "shoulder", "lateral raise", "front raise", "rear delt",
+                   "reverse fly", "reverse flye", "face pull", "upright row", "delt",
+                   "ohp", "press"]],
+    ["Arms", ["curl", "tricep", "triceps", "bicep", "biceps", "skullcrusher", "skull crusher",
+              "extension", "pushdown", "kickback", "preacher", "hammer"]],
+    ["Core", ["plank", "crunch", "sit up", "situp", "hanging leg", "leg raise", "ab wheel",
+              "pallof", "russian twist", "knee raise", "woodchop"]],
   ];
+  const MUSCLE_MATCHERS = MUSCLE_RULES.map(([group, terms]) => [
+    group,
+    terms.map((t) => new RegExp("\\b" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b")),
+  ]);
   function muscleGroupFor(name) {
-    const n = name.toLowerCase();
-    for (const [group, terms] of MUSCLE_RULES) {
-      if (terms.some((term) => n.includes(term))) return group;
+    // Collapse separators ("Pull-Up", "Pull_Up" → "pull up") so word-boundary
+    // matching is robust to however the source app punctuates exercise names.
+    const n = name.toLowerCase().replace(/[-_/]+/g, " ").replace(/\s+/g, " ").trim();
+    for (const [group, matchers] of MUSCLE_MATCHERS) {
+      if (matchers.some((re) => re.test(n))) return group;
     }
     return "Other";
   }
