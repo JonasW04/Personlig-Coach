@@ -78,6 +78,7 @@ class SessionManager:
 
 
 chat_sessions = SessionManager()
+sync_lock = asyncio.Lock()
 _scheduler = None
 
 
@@ -192,6 +193,21 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 async def get_stats(weeks: int = 12) -> dict:
     weeks = max(1, min(weeks, 104))
     return await asyncio.to_thread(stats.dashboard, weeks)
+
+
+@app.post("/api/sync")
+async def sync_data() -> JSONResponse | dict:
+    if sync_lock.locked():
+        return JSONResponse(
+            {"running": True, "message": "Sync already running."},
+            status_code=202,
+        )
+
+    async with sync_lock:
+        from coach import sync
+
+        result = await asyncio.to_thread(sync.run)
+        return {"running": False, **result}
 
 
 # ----------------------------------------------------------------------- reports
