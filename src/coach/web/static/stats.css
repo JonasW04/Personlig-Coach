@@ -114,15 +114,15 @@
   display: grid;
   gap: 8px;
 }
+.goals-editor[hidden] { display: none; }
 .goal-edit-row {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 96px 34px;
+  grid-template-columns: minmax(0, 1fr) 106px 34px;
   align-items: center;
   gap: 8px;
   color: var(--muted);
   font-size: 13px;
 }
-.goal-edit-row input[type="checkbox"] { accent-color: var(--strength); }
 .goal-edit-row input[type="text"] {
   min-width: 0;
   background: var(--surface-2);
@@ -411,7 +411,7 @@
 }
 @media (max-width: 460px) {
   .goal-grid { grid-template-columns: 1fr; }
-  .goal-edit-row { grid-template-columns: 22px minmax(0, 1fr) 82px 28px; }
+  .goal-edit-row { grid-template-columns: minmax(0, 1fr) 86px 28px; }
   .metric .m-value { font-size: 24px; }
   .stats-titlerow h2 { font-size: 21px; }
 }

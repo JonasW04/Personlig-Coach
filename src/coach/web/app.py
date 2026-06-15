@@ -147,16 +147,6 @@ DEFAULT_GOALS = [
         "direction": "at_most",
         "scope": "Latest",
     },
-    {
-        "key": "bench_e1rm",
-        "label": "Bench est. 1RM",
-        "metric": "exercise_e1rm",
-        "exercise": "Bench Press",
-        "target_value": None,
-        "unit": "kg",
-        "direction": "at_least",
-        "scope": "Best",
-    },
 ]
 GOAL_SPECS = {g["key"]: g for g in DEFAULT_GOALS}
 

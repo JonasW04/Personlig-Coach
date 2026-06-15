@@ -97,11 +97,11 @@
     if (goal.metric === "weekly_cardio_minutes") return weekSummary.cardioMin;
     if (goal.metric === "body_weight") return latestBody ? latestBody.weight_kg : null;
     if (goal.metric === "body_fat") return latestBody ? latestBody.fat_ratio_pct : null;
-    if (goal.metric === "exercise_e1rm") {
-      const best = D().bestExerciseE1rm(goal.exercise || "", D().firstDate, D().lastDate);
-      return best ? best.e1rm : null;
-    }
     return null;
+  }
+  function goalTarget(key) {
+    const goal = D().goals().find((g) => g.key === key && g.enabled && g.target_value != null);
+    return goal ? Number(goal.target_value) : null;
   }
   function fmtGoalValue(value, unit) {
     if (value == null || isNaN(value)) return "--";
@@ -152,7 +152,6 @@
     }).join("");
     const rows = allGoals.map((goal) => `
       <label class="goal-edit-row">
-        <input type="checkbox" data-goal-enabled="${goal.key}" ${goal.enabled ? "checked" : ""} />
         <span>${goal.label}</span>
         <input type="text" inputmode="decimal" data-goal-target="${goal.key}" value="${goal.target_value == null ? "" : goal.target_value}" placeholder="Target" />
         <em>${goal.unit}</em>
@@ -161,8 +160,8 @@
       html: `
         <div class="panel goals-panel" data-goals-panel>
           <div class="panel-head">
-            <div><h3>Goals & targets</h3><div class="sub">Weekly targets, body targets, and key lift targets</div></div>
-            <button class="secondary" type="button" data-goals-edit>Edit</button>
+            <div><h3>Goals & targets</h3><div class="sub">Weekly training targets and body targets</div></div>
+            <button class="secondary" type="button" data-goals-edit>Edit targets</button>
           </div>
           <div class="goal-grid">${cards || `<div class="empty-block">No active goals.</div>`}</div>
           <form class="goals-editor" data-goals-editor hidden>
@@ -177,20 +176,32 @@
         const panel = root.querySelector("[data-goals-panel]");
         if (!panel) return;
         const editor = panel.querySelector("[data-goals-editor]");
-        panel.querySelector("[data-goals-edit]").addEventListener("click", () => {
-          editor.hidden = !editor.hidden;
+        const editButton = panel.querySelector("[data-goals-edit]");
+        function syncEditor() {
+          for (const goal of D().goals()) {
+            const input = editor.querySelector(`[data-goal-target="${goal.key}"]`);
+            if (input) input.value = goal.target_value == null ? "" : goal.target_value;
+          }
+        }
+        function closeEditor() {
+          editor.hidden = true;
+          editButton.hidden = false;
+        }
+        editButton.addEventListener("click", () => {
+          syncEditor();
+          editor.hidden = false;
+          editButton.hidden = true;
         });
         panel.querySelector("[data-goals-cancel]").addEventListener("click", () => {
-          editor.hidden = true;
+          closeEditor();
         });
         editor.addEventListener("submit", async (e) => {
           e.preventDefault();
           const payload = D().goals().map((goal) => {
             const input = editor.querySelector(`[data-goal-target="${goal.key}"]`);
-            const enabled = editor.querySelector(`[data-goal-enabled="${goal.key}"]`).checked;
             const raw = input.value.trim();
             const target = raw === "" ? null : Number(raw.replace(",", "."));
-            return { key: goal.key, enabled, target_value: Number.isFinite(target) ? target : null };
+            return { key: goal.key, enabled: goal.enabled, target_value: Number.isFinite(target) ? target : null };
           });
           const save = editor.querySelector("button[type='submit']");
           const label = save.textContent;
@@ -262,15 +273,38 @@
   }
 
   // ---------- shared chart builders ----------
+  function targetDataset(label, value, count, color, yAxisID = "y") {
+    return {
+      label,
+      data: Array.from({ length: count }, () => value),
+      type: "line",
+      yAxisID,
+      borderColor: color,
+      borderWidth: 1.8,
+      borderDash: [6, 5],
+      stack: "target",
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      tension: 0,
+      fill: false,
+      backgroundColor: "transparent",
+    };
+  }
   function trainingTimeChart(canvas, ser) {
     const C = CC().THEME;
     const labels = ser.points.map((p) => CC().fmtLabel(p.key, ser.daily));
+    const datasets = [
+      CC().barDataset("Strength", ser.points.map((p) => +(p.strengthMin / 60).toFixed(1)), C.strength, { stack: "t", radius: 3 }),
+      CC().barDataset("Cardio", ser.points.map((p) => +(p.cardioMin / 60).toFixed(1)), C.cardio, { stack: "t", radius: 5 }),
+    ];
+    const cardioTarget = goalTarget("weekly_cardio_minutes");
+    if (cardioTarget != null) {
+      const targetHours = cardioTarget / (ser.daily ? 7 * 60 : 60);
+      datasets.push(targetDataset(ser.daily ? "Cardio target pace" : "Cardio target", +targetHours.toFixed(2), ser.points.length, "#e0a23b"));
+    }
     CC().mount(canvas, {
       type: "bar",
-      data: { labels, datasets: [
-        CC().barDataset("Strength", ser.points.map((p) => +(p.strengthMin / 60).toFixed(1)), C.strength, { stack: "t", radius: 3 }),
-        CC().barDataset("Cardio", ser.points.map((p) => +(p.cardioMin / 60).toFixed(1)), C.cardio, { stack: "t", radius: 5 }),
-      ] },
+      data: { labels, datasets },
       options: CC().options({ y: { stacked: true, ticks: { callback: (v) => v + "h" } }, x: { stacked: true } }),
     });
   }
@@ -314,11 +348,16 @@
   function bodyWeightChart(canvas, ser) {
     const C = CC().THEME;
     const pts = ser.points;
+    const datasets = [CC().lineDataset("Weight", pts.map((p) => p.weight_kg), C.strength, true)];
+    const weightTarget = goalTarget("body_weight");
+    if (weightTarget != null) {
+      datasets.push(targetDataset("Target", weightTarget, pts.length, "#e0a23b"));
+    }
     CC().mount(canvas, {
       type: "line",
       data: {
         labels: pts.map((p) => CC().fmtLabel(p.key, ser.daily)),
-        datasets: [CC().lineDataset("Weight", pts.map((p) => p.weight_kg), C.strength, true)],
+        datasets,
       },
       options: CC().options({
         beginAtZero: false,
@@ -330,20 +369,34 @@
   function bodyCompositionChart(canvas, ser) {
     const C = CC().THEME;
     const pts = ser.points;
+    const datasets = [
+      CC().lineDataset("Muscle", pts.map((p) => p.muscle_mass_kg), C.good, false),
+      CC().lineDataset("Fat mass", pts.map((p) => p.fat_mass_kg), "#e0a23b", false),
+      { ...CC().lineDataset("Body fat %", pts.map((p) => p.fat_ratio_pct), C.cardio, false), yAxisID: "yPct" },
+    ];
+    const fatTarget = goalTarget("body_fat");
+    if (fatTarget != null) {
+      datasets.push(targetDataset("Fat % target", fatTarget, pts.length, "#f2c46d", "yPct"));
+    }
+    const opts = CC().options({
+      beginAtZero: false,
+      xTicks: 7,
+      y: { ticks: { callback: (v) => v + " kg" } },
+    });
+    opts.scales.yPct = {
+      position: "right",
+      grid: { drawOnChartArea: false },
+      border: { display: false },
+      ticks: { color: C.faint, padding: 8, maxTicksLimit: 5, callback: (v) => v + "%" },
+      beginAtZero: false,
+    };
     CC().mount(canvas, {
       type: "line",
       data: {
         labels: pts.map((p) => CC().fmtLabel(p.key, ser.daily)),
-        datasets: [
-          CC().lineDataset("Muscle", pts.map((p) => p.muscle_mass_kg), C.good, false),
-          CC().lineDataset("Fat", pts.map((p) => p.fat_mass_kg), "#e0a23b", false),
-        ],
+        datasets,
       },
-      options: CC().options({
-        beginAtZero: false,
-        xTicks: 7,
-        y: { ticks: { callback: (v) => v + " kg" } },
-      }),
+      options: opts,
     });
   }
 
@@ -365,7 +418,13 @@
 
     const weightChange = bodyDelta(rows, "weight_kg");
     const fatChange = bodyDelta(rows, "fat_ratio_pct");
-    const compositionLegend = legendHtml([{ c: C.good, l: "Muscle" }, { c: "#e0a23b", l: "Fat" }]);
+    const weightTarget = goalTarget("body_weight");
+    const weightLegend = weightTarget != null
+      ? legendHtml([{ c: C.strength, l: "Weight" }, { c: "#e0a23b", l: "Target" }])
+      : `<span class="unit">kg</span>`;
+    const compositionItems = [{ c: C.good, l: "Muscle" }, { c: "#e0a23b", l: "Fat mass" }, { c: C.cardio, l: "Body fat %" }];
+    if (goalTarget("body_fat") != null) compositionItems.push({ c: "#f2c46d", l: "Target" });
+    const compositionLegend = legendHtml(compositionItems);
     return {
       html: `
         <div class="section-title"><h3>Body</h3><div class="rule"></div></div>
@@ -373,7 +432,7 @@
           <div class="panel body-panel">
             <div class="panel-head">
               <div><h3>Body weight</h3><div class="sub">Latest ${bodyDate(latest.date)} · ${rows.length} measurements</div></div>
-              <span class="unit">kg</span>
+              ${weightLegend}
             </div>
             <div class="body-metrics">
               <div class="body-stat"><div class="v">${nf(latest.weight_kg, 1)}<span class="unit">kg</span></div><div class="l">Latest</div></div>
@@ -488,6 +547,8 @@
     const ttId = nid("tt"), volId = nid("vol"), distId = nid("dist");
     const goalsSection = buildGoalsSection();
     const bodySection = buildBodySection(range);
+    const timeLegend = [{ c: C.strength, l: "Strength" }, { c: C.cardio, l: "Cardio" }];
+    if (goalTarget("weekly_cardio_minutes") != null) timeLegend.push({ c: "#e0a23b", l: "Target" });
     root.innerHTML = `
       <div class="metric-grid">${metricsFor(s, ctx.prev, ["active", "streak", "sets", "sessions", "shours", "chours", "tonnage", "km"])}</div>
 
@@ -497,7 +558,7 @@
       <div class="panel">
         <div class="panel-head">
           <div><h3>Training time</h3><div class="sub">Hours per ${ser.daily ? "day" : "week"}, strength + cardio</div></div>
-          ${legendHtml([{ c: C.strength, l: "Strength" }, { c: C.cardio, l: "Cardio" }])}
+          ${legendHtml(timeLegend)}
         </div>
         <div class="chart-frame tall"><canvas id="${ttId}"></canvas></div>
       </div>
