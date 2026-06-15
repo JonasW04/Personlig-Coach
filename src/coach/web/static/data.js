@@ -21,6 +21,7 @@
   // ---- live state, populated by load() ----
   let DB = [];
   let BODY = [];
+  let GOALS = [];
   let firstDate = iso(TODAY);
   let lastDate = iso(TODAY);
 
@@ -56,10 +57,12 @@
     const json = await resp.json();
     DB = (json.days || []).map(enrich).sort((a, b) => (a.date < b.date ? -1 : 1));
     BODY = (json.body || []).sort((a, b) => (a.date < b.date ? -1 : 1));
+    GOALS = json.goals || GOALS;
     firstDate = [DB[0]?.date, BODY[0]?.date].filter(Boolean).sort()[0] || iso(TODAY);
     lastDate = iso(TODAY);
     api.DB = DB;
     api.BODY = BODY;
+    api.GOALS = GOALS;
     api.firstDate = firstDate;
     api.lastDate = lastDate;
   }
@@ -88,6 +91,11 @@
     const rows = bodySlice(start, end);
     return rows.length ? rows[rows.length - 1] : null;
   }
+  function setGoals(goals) {
+    GOALS = goals || [];
+    api.GOALS = GOALS;
+  }
+  function goals() { return GOALS; }
 
   function summarize(start, end) {
     const rows = slice(start, end);
@@ -130,6 +138,14 @@
       cur = addDays(cur, step);
     }
     return keys;
+  }
+
+  function weekStart(d) {
+    const off = (d.getDay() + 6) % 7;
+    return addDays(startOfDay(d), -off);
+  }
+  function currentWeekRange() {
+    return { start: iso(weekStart(TODAY)), end: iso(TODAY) };
   }
 
   // consecutive active days counting back from `end` (inclusive)
@@ -256,6 +272,99 @@
     return { daily, points: order.map((k) => buckets.get(k)) };
   }
 
+  function exerciseMetrics(ex) {
+    let volume = 0, reps = 0, topWeight = 0, e1rm = 0;
+    let bestSet = null;
+    for (const s of ex.sets) {
+      const r = s.reps || 0;
+      const w = s.weight || 0;
+      volume += r * w;
+      reps += r;
+      if (w > topWeight) topWeight = w;
+      const est = w * (1 + r / 30);
+      if (est > e1rm) {
+        e1rm = est;
+        bestSet = { reps: r, weight: w };
+      }
+    }
+    return { volume: Math.round(volume), reps, topWeight, e1rm: Math.round(e1rm), bestSet };
+  }
+
+  function bestExerciseE1rm(name, start, end) {
+    let best = null;
+    for (const d of slice(start, end)) {
+      if (!d.strength) continue;
+      const ex = d.strength.exercises.find((e) => e.name === name);
+      if (!ex) continue;
+      const m = exerciseMetrics(ex);
+      if (!best || m.e1rm > best.e1rm) best = { date: d.date, exercise: ex.name, ...m };
+    }
+    return best;
+  }
+
+  function personalRecords(start, end) {
+    const bestByExercise = new Map();
+    const records = [];
+    const rows = [...DB].sort((a, b) => (a.date < b.date ? -1 : 1));
+    for (const d of rows) {
+      if (!d.strength) continue;
+      for (const ex of d.strength.exercises) {
+        const m = exerciseMetrics(ex);
+        if (!m.e1rm) continue;
+        const prev = bestByExercise.get(ex.name) || 0;
+        if (m.e1rm > prev + 0.5) {
+          if (prev > 0 && inRange(d.date, start, end)) {
+            records.push({
+              date: d.date,
+              exercise: ex.name,
+              e1rm: m.e1rm,
+              previous: Math.round(prev),
+              delta: Math.round(m.e1rm - prev),
+              bestSet: m.bestSet,
+            });
+          }
+          bestByExercise.set(ex.name, m.e1rm);
+        }
+      }
+    }
+    return records.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return b.delta - a.delta;
+    });
+  }
+
+  const MUSCLE_ORDER = ["Chest", "Back", "Quads", "Hamstrings", "Shoulders", "Arms", "Core", "Other"];
+  const MUSCLE_RULES = [
+    ["Chest", ["bench", "chest", "dip", "fly", "push-up", "push up"]],
+    ["Back", ["row", "pull-up", "pullup", "chin-up", "chinup", "lat", "pulldown"]],
+    ["Quads", ["squat", "leg press", "lunge", "split squat", "leg extension"]],
+    ["Hamstrings", ["deadlift", "romanian", "rdl", "leg curl", "hip thrust", "glute"]],
+    ["Shoulders", ["overhead", "shoulder", "lateral raise", "front raise", "rear delt", "press"]],
+    ["Arms", ["curl", "triceps", "biceps", "skullcrusher", "extension", "pushdown"]],
+    ["Core", ["plank", "crunch", "sit-up", "situp", "hanging leg", "ab wheel", "pallof"]],
+  ];
+  function muscleGroupFor(name) {
+    const n = name.toLowerCase();
+    for (const [group, terms] of MUSCLE_RULES) {
+      if (terms.some((term) => n.includes(term))) return group;
+    }
+    return "Other";
+  }
+  function muscleVolume(start, end) {
+    const totals = new Map(MUSCLE_ORDER.map((g) => [g, { group: g, sets: 0, tonnage: 0 }]));
+    for (const d of slice(start, end)) {
+      if (!d.strength) continue;
+      for (const ex of d.strength.exercises) {
+        const group = muscleGroupFor(ex.name);
+        const bucket = totals.get(group);
+        const m = exerciseMetrics(ex);
+        bucket.sets += ex.sets.length;
+        bucket.tonnage += m.volume;
+      }
+    }
+    return MUSCLE_ORDER.map((g) => totals.get(g));
+  }
+
   // day type for calendar: 'none' | 'strength' | 'cardio' | 'both'
   function dayType(entry) {
     if (!entry) return "none";
@@ -330,9 +439,11 @@
   }
 
   const api = {
-    DB, BODY, TODAY, iso, parse, addDays, daysBetween,
+    DB, BODY, GOALS, TODAY, iso, parse, addDays, daysBetween,
+    currentWeekRange,
     rangeBounds, summarize, series, exerciseList, exerciseSeries, exerciseTrend,
-    bodySlice, latestBody, bodySeries,
+    bestExerciseE1rm, personalRecords, muscleVolume,
+    bodySlice, latestBody, bodySeries, goals, setGoals,
     calendarMonth, heatmap, dayType, monthsAvailable,
     firstDate, lastDate,
     load,

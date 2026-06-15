@@ -84,6 +84,183 @@
     return set.map((k) => all[k]).join("");
   }
 
+  function fmtShortDate(iso) {
+    if (!iso) return "";
+    return new Date(iso + "T00:00:00").toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  function goalValue(goal) {
+    const week = D().currentWeekRange();
+    const weekSummary = D().summarize(week.start, week.end);
+    const latestBody = D().latestBody(D().firstDate, D().lastDate);
+    if (goal.metric === "weekly_strength_sessions") return weekSummary.liftSessions;
+    if (goal.metric === "weekly_active_days") return weekSummary.activeDays;
+    if (goal.metric === "weekly_cardio_minutes") return weekSummary.cardioMin;
+    if (goal.metric === "body_weight") return latestBody ? latestBody.weight_kg : null;
+    if (goal.metric === "body_fat") return latestBody ? latestBody.fat_ratio_pct : null;
+    if (goal.metric === "exercise_e1rm") {
+      const best = D().bestExerciseE1rm(goal.exercise || "", D().firstDate, D().lastDate);
+      return best ? best.e1rm : null;
+    }
+    return null;
+  }
+  function fmtGoalValue(value, unit) {
+    if (value == null || isNaN(value)) return "--";
+    const dp = unit === "kg" || unit === "%" ? 1 : 0;
+    return `${nf(value, dp)}${unit ? `<span class="unit">${unit}</span>` : ""}`;
+  }
+  function goalStatus(goal, current) {
+    const target = goal.target_value;
+    if (target == null || current == null) return { pct: 0, label: "Set target", state: "unset" };
+    if (goal.direction === "at_most") {
+      const diff = current - target;
+      return {
+        pct: Math.max(0, Math.min(1, target / Math.max(current, target))),
+        label: diff <= 0 ? "On target" : `${nf(diff, 1)}${goal.unit} over`,
+        state: diff <= 0 ? "good" : "warn",
+      };
+    }
+    if (goal.direction === "toward") {
+      const diff = current - target;
+      return {
+        pct: 1,
+        label: Math.abs(diff) < 0.05 ? "On target" : `${nf(Math.abs(diff), 1)}${goal.unit} ${diff > 0 ? "over" : "under"}`,
+        state: Math.abs(diff) < 0.05 ? "good" : "neutral",
+      };
+    }
+    const pct = target ? current / target : 0;
+    return {
+      pct: Math.max(0, Math.min(1, pct)),
+      label: current >= target ? "Done" : `${nf(Math.max(0, target - current), goal.unit === "kg" ? 1 : 0)}${goal.unit} left`,
+      state: current >= target ? "good" : "neutral",
+    };
+  }
+
+  function buildGoalsSection() {
+    const goals = D().goals().filter((g) => g.enabled);
+    const allGoals = D().goals();
+    if (!allGoals.length) return { html: "", mount() {} };
+    const cards = goals.map((goal) => {
+      const current = goalValue(goal);
+      const status = goalStatus(goal, current);
+      const target = goal.target_value == null ? "Set target" : fmtGoalValue(goal.target_value, goal.unit);
+      return `<div class="goal-card ${status.state}">
+        <div class="goal-top"><span>${goal.label}</span><span>${goal.scope}</span></div>
+        <div class="goal-main">${fmtGoalValue(current, goal.unit)}</div>
+        <div class="goal-sub"><span>Target ${target}</span><span>${status.label}</span></div>
+        <div class="goal-track"><i style="width:${Math.round(status.pct * 100)}%"></i></div>
+      </div>`;
+    }).join("");
+    const rows = allGoals.map((goal) => `
+      <label class="goal-edit-row">
+        <input type="checkbox" data-goal-enabled="${goal.key}" ${goal.enabled ? "checked" : ""} />
+        <span>${goal.label}</span>
+        <input type="text" inputmode="decimal" data-goal-target="${goal.key}" value="${goal.target_value == null ? "" : goal.target_value}" placeholder="Target" />
+        <em>${goal.unit}</em>
+      </label>`).join("");
+    return {
+      html: `
+        <div class="panel goals-panel" data-goals-panel>
+          <div class="panel-head">
+            <div><h3>Goals & targets</h3><div class="sub">Weekly targets, body targets, and key lift targets</div></div>
+            <button class="secondary" type="button" data-goals-edit>Edit</button>
+          </div>
+          <div class="goal-grid">${cards || `<div class="empty-block">No active goals.</div>`}</div>
+          <form class="goals-editor" data-goals-editor hidden>
+            ${rows}
+            <div class="goals-editor-actions">
+              <button class="secondary" type="button" data-goals-cancel>Cancel</button>
+              <button class="primary" type="submit">Save targets</button>
+            </div>
+          </form>
+        </div>`,
+      mount(root) {
+        const panel = root.querySelector("[data-goals-panel]");
+        if (!panel) return;
+        const editor = panel.querySelector("[data-goals-editor]");
+        panel.querySelector("[data-goals-edit]").addEventListener("click", () => {
+          editor.hidden = !editor.hidden;
+        });
+        panel.querySelector("[data-goals-cancel]").addEventListener("click", () => {
+          editor.hidden = true;
+        });
+        editor.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const payload = D().goals().map((goal) => {
+            const input = editor.querySelector(`[data-goal-target="${goal.key}"]`);
+            const enabled = editor.querySelector(`[data-goal-enabled="${goal.key}"]`).checked;
+            const raw = input.value.trim();
+            const target = raw === "" ? null : Number(raw.replace(",", "."));
+            return { key: goal.key, enabled, target_value: Number.isFinite(target) ? target : null };
+          });
+          const save = editor.querySelector("button[type='submit']");
+          const label = save.textContent;
+          save.disabled = true;
+          save.textContent = "Saving…";
+          try {
+            const resp = await fetch("/api/goals", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ goals: payload }),
+            });
+            if (resp.status === 401) { location.href = "/login"; return; }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            D().setGoals(data.goals);
+            render();
+          } catch (err) {
+            const meta = document.getElementById("stats-meta");
+            if (meta) meta.textContent = `Goal save failed: ${err.message}`;
+          } finally {
+            save.disabled = false;
+            save.textContent = label;
+          }
+        });
+      },
+    };
+  }
+
+  function buildProgressionSection(range) {
+    const prev = prevRange(range);
+    const prs = D().personalRecords(range.start, range.end).slice(0, 6);
+    const curMuscles = D().muscleVolume(range.start, range.end);
+    const prevMuscles = new Map(D().muscleVolume(prev.start, prev.end).map((m) => [m.group, m]));
+    const shownMuscles = curMuscles.filter((m) => m.group !== "Other" || m.sets > 0);
+    const maxSets = Math.max(1, ...shownMuscles.map((m) => m.sets));
+    const prRows = prs.length ? prs.map((pr) => {
+      const set = pr.bestSet ? `${nf(pr.bestSet.weight, 1)}kg × ${pr.bestSet.reps}` : "Best set";
+      return `<div class="pr-row">
+        <div><strong>${pr.exercise}</strong><span>${fmtShortDate(pr.date)} · ${set}</span></div>
+        <div class="pr-value">${nf(pr.e1rm)}<span>kg</span><em>+${nf(pr.delta)}</em></div>
+      </div>`;
+    }).join("") : `<div class="empty-block compact">No new PRs in this range.</div>`;
+    const muscleRows = shownMuscles.map((m) => {
+      const prior = prevMuscles.get(m.group)?.sets || 0;
+      const delta = m.sets - prior;
+      const width = Math.round((m.sets / maxSets) * 100);
+      return `<div class="muscle-row">
+        <div class="muscle-line"><strong>${m.group}</strong><span>${nf(m.sets)} sets ${delta === 0 ? "±0" : delta > 0 ? `+${delta}` : delta}</span></div>
+        <div class="muscle-track"><i style="width:${width}%"></i></div>
+      </div>`;
+    }).join("");
+    return `
+      <div class="section-title"><h3>Progression</h3><div class="rule"></div></div>
+      <div class="progress-grid">
+        <div class="panel">
+          <div class="panel-head">
+            <div><h3>PRs & highlights</h3><div class="sub">Estimated 1RM records in this range</div></div>
+          </div>
+          <div class="pr-list">${prRows}</div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div><h3>Muscle volume</h3><div class="sub">Working sets by primary muscle group</div></div>
+            <span class="unit">sets</span>
+          </div>
+          <div class="muscle-list">${muscleRows}</div>
+        </div>
+      </div>`;
+  }
+
   // ---------- shared chart builders ----------
   function trainingTimeChart(canvas, ser) {
     const C = CC().THEME;
@@ -309,9 +486,12 @@
     const { s, ser, range } = ctx;
     const C = CC().THEME;
     const ttId = nid("tt"), volId = nid("vol"), distId = nid("dist");
+    const goalsSection = buildGoalsSection();
     const bodySection = buildBodySection(range);
     root.innerHTML = `
       <div class="metric-grid">${metricsFor(s, ctx.prev, ["active", "streak", "sets", "sessions", "shours", "chours", "tonnage", "km"])}</div>
+
+      ${goalsSection.html}
 
       <div class="section-title"><h3>Trends</h3><div class="rule"></div></div>
       <div class="panel">
@@ -332,6 +512,8 @@
         </div>
       </div>
 
+      ${buildProgressionSection(range)}
+
       <div class="section-title"><h3>Exercises</h3><div class="rule"></div></div>
       <div class="panel" id="ex-panel-a"></div>
 
@@ -343,6 +525,7 @@
     trainingTimeChart(root.querySelector("#" + ttId), ser);
     volumeChart(root.querySelector("#" + volId), ser);
     distanceChart(root.querySelector("#" + distId), ser);
+    goalsSection.mount(root);
     buildExercisePanel(root.querySelector("#ex-panel-a"), range, { default: "Bench Press" });
     window.CoachCalendar.create(root.querySelector("#cal-a"), { defaultMode: "month", range }).render();
     bodySection.mount(root);

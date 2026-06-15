@@ -14,6 +14,7 @@ import asyncio
 import json
 import secrets
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import uvicorn
@@ -33,7 +34,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from coach.agents.coordinator import build_options
 from coach.config import settings
 from coach.db import SessionLocal, init_db
-from coach.models import PushSubscription, Report
+from coach.models import ActionItem, Goal, PushSubscription, Report
 from coach.web import stats
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -98,6 +99,88 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Coach", lifespan=lifespan)
+
+
+DEFAULT_GOALS = [
+    {
+        "key": "weekly_strength_sessions",
+        "label": "Strength sessions",
+        "metric": "weekly_strength_sessions",
+        "target_value": 3.0,
+        "unit": "sessions",
+        "direction": "at_least",
+        "scope": "This week",
+    },
+    {
+        "key": "weekly_active_days",
+        "label": "Active days",
+        "metric": "weekly_active_days",
+        "target_value": 4.0,
+        "unit": "days",
+        "direction": "at_least",
+        "scope": "This week",
+    },
+    {
+        "key": "weekly_cardio_minutes",
+        "label": "Cardio time",
+        "metric": "weekly_cardio_minutes",
+        "target_value": 90.0,
+        "unit": "min",
+        "direction": "at_least",
+        "scope": "This week",
+    },
+    {
+        "key": "body_weight",
+        "label": "Body weight",
+        "metric": "body_weight",
+        "target_value": None,
+        "unit": "kg",
+        "direction": "toward",
+        "scope": "Latest",
+    },
+    {
+        "key": "body_fat",
+        "label": "Body fat",
+        "metric": "body_fat",
+        "target_value": None,
+        "unit": "%",
+        "direction": "at_most",
+        "scope": "Latest",
+    },
+    {
+        "key": "bench_e1rm",
+        "label": "Bench est. 1RM",
+        "metric": "exercise_e1rm",
+        "exercise": "Bench Press",
+        "target_value": None,
+        "unit": "kg",
+        "direction": "at_least",
+        "scope": "Best",
+    },
+]
+GOAL_SPECS = {g["key"]: g for g in DEFAULT_GOALS}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _goals_json() -> list[dict]:
+    with SessionLocal() as s:
+        saved = {g.key: g for g in s.execute(select(Goal)).scalars().all()}
+    out = []
+    for spec in DEFAULT_GOALS:
+        row = saved.get(spec["key"])
+        goal = {**spec}
+        if row is not None:
+            goal["target_value"] = row.target_value
+            goal["enabled"] = row.enabled
+            goal["updated_at"] = row.updated_at.isoformat() if row.updated_at else None
+        else:
+            goal["enabled"] = True
+            goal["updated_at"] = None
+        out.append(goal)
+    return out
 
 
 # NOTE: middleware added later runs *outermost*. require_auth reads request.session,
@@ -191,7 +274,40 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 # ------------------------------------------------------------------------- stats
 @app.get("/api/stats")
 async def get_stats(start: str | None = None, end: str | None = None) -> dict:
-    return await asyncio.to_thread(stats.activity, start, end)
+    payload = await asyncio.to_thread(stats.activity, start, end)
+    payload["goals"] = _goals_json()
+    return payload
+
+
+class GoalUpdate(BaseModel):
+    key: str
+    target_value: float | None = None
+    enabled: bool = True
+
+
+class GoalsUpdate(BaseModel):
+    goals: list[GoalUpdate]
+
+
+@app.get("/api/goals")
+async def list_goals() -> dict:
+    return {"goals": _goals_json()}
+
+
+@app.put("/api/goals")
+async def update_goals(req: GoalsUpdate) -> dict:
+    with SessionLocal() as s:
+        for item in req.goals:
+            if item.key not in GOAL_SPECS:
+                raise HTTPException(400, f"Unknown goal key: {item.key}")
+            row = s.get(Goal, item.key)
+            if row is None:
+                row = Goal(key=item.key)
+                s.add(row)
+            row.target_value = item.target_value
+            row.enabled = item.enabled
+        s.commit()
+    return {"goals": _goals_json()}
 
 
 @app.post("/api/sync", response_model=None)
@@ -207,6 +323,101 @@ async def sync_data() -> JSONResponse | dict:
 
         result = await asyncio.to_thread(sync.run)
         return {"running": False, **result}
+
+
+# ------------------------------------------------------------------- action plan
+def _action_json(item: ActionItem) -> dict:
+    return {
+        "id": item.id,
+        "title": item.title,
+        "status": item.status,
+        "due_date": item.due_date.isoformat() if item.due_date else None,
+        "source_report_id": item.source_report_id,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+    }
+
+
+class ActionCreate(BaseModel):
+    title: str
+    due_date: date | None = None
+    source_report_id: int | None = None
+
+
+class ActionUpdate(BaseModel):
+    title: str | None = None
+    status: str | None = None
+    due_date: date | None = None
+
+
+@app.get("/api/actions")
+async def list_actions(status: str | None = None, limit: int = 100) -> dict:
+    limit = max(1, min(limit, 200))
+    with SessionLocal() as s:
+        q = select(ActionItem).order_by(ActionItem.created_at.desc()).limit(limit)
+        if status:
+            q = (
+                select(ActionItem)
+                .where(ActionItem.status == status)
+                .order_by(ActionItem.created_at.desc())
+                .limit(limit)
+            )
+        rows = s.execute(q).scalars().all()
+    return {"actions": [_action_json(row) for row in rows]}
+
+
+@app.post("/api/actions")
+async def create_action(req: ActionCreate) -> dict:
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(400, "title is required")
+    with SessionLocal() as s:
+        item = ActionItem(
+            title=title,
+            due_date=req.due_date,
+            source_report_id=req.source_report_id,
+        )
+        s.add(item)
+        s.commit()
+        s.refresh(item)
+        s.expunge(item)
+    return _action_json(item)
+
+
+@app.patch("/api/actions/{item_id}")
+async def update_action(item_id: int, req: ActionUpdate) -> dict:
+    with SessionLocal() as s:
+        item = s.get(ActionItem, item_id)
+        if item is None:
+            raise HTTPException(404, "action not found")
+        if req.title is not None:
+            title = req.title.strip()
+            if not title:
+                raise HTTPException(400, "title cannot be empty")
+            item.title = title
+        if req.due_date is not None:
+            item.due_date = req.due_date
+        if req.status is not None:
+            if req.status not in {"open", "done"}:
+                raise HTTPException(400, "status must be open or done")
+            item.status = req.status
+            item.completed_at = _utcnow() if req.status == "done" else None
+        s.commit()
+        s.refresh(item)
+        s.expunge(item)
+    return _action_json(item)
+
+
+@app.delete("/api/actions/{item_id}")
+async def delete_action(item_id: int) -> dict:
+    with SessionLocal() as s:
+        item = s.get(ActionItem, item_id)
+        if item is None:
+            raise HTTPException(404, "action not found")
+        s.delete(item)
+        s.commit()
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ notifications

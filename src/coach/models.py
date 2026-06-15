@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -105,6 +105,38 @@ class Report(Base):
         DateTime(timezone=True), default=_utcnow
     )
     content: Mapped[str] = mapped_column(Text)
+
+
+class Goal(Base):
+    """User-editable dashboard target, keyed to a known app metric."""
+
+    __tablename__ = "goals"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    target_value: Mapped[float | None] = mapped_column(Float)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ActionItem(Base):
+    """A concrete coaching action that can be checked off by the user."""
+
+    __tablename__ = "action_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String, default="open", index=True)
+    due_date: Mapped[date | None] = mapped_column(Date)
+    source_report_id: Mapped[int | None] = mapped_column(ForeignKey("reports.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PushSubscription(Base):

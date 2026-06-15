@@ -21,7 +21,7 @@ function switchView(view) {
   }
   $("title").textContent = TITLES[view];
   if (view === "stats") loadStats();
-  if (view === "reports") loadReports();
+  if (view === "reports") { loadActions(); loadReports(); }
   history.replaceState(null, "", "#" + view);
 }
 
@@ -183,8 +183,29 @@ const reportsList = $("reports-list");
 const generateBtn = $("generate");
 const pushToggle = $("push-toggle");
 const pushStatus = $("push-status");
+const actionForm = $("action-form");
+const actionTitle = $("action-title");
+const actionDue = $("action-due");
+const actionsList = $("actions-list");
+const actionStatus = $("action-status");
+const importActions = $("import-actions");
 let pushPublicKey = null;
 let serviceWorkerReady = null;
+let cachedActions = [];
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
+
+function setActionStatus(text) {
+  if (actionStatus) actionStatus.textContent = text || "";
+}
 
 document.querySelectorAll(".segmented button").forEach((b) =>
   b.addEventListener("click", () => {
@@ -199,6 +220,170 @@ document.querySelectorAll(".segmented button").forEach((b) =>
 function fmtDate(iso) {
   if (!iso) return "";
   return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+
+function fmtDue(iso) {
+  if (!iso) return "";
+  return new Date(iso + "T00:00:00").toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function renderActions(actions) {
+  if (!actionsList) return;
+  cachedActions = actions || [];
+  const open = cachedActions.filter((a) => a.status !== "done");
+  const done = cachedActions.filter((a) => a.status === "done").slice(0, 5);
+  if (!open.length && !done.length) {
+    actionsList.innerHTML = `<div class="action-empty">No open actions.</div>`;
+    return;
+  }
+  const row = (a) => `
+    <div class="action-row ${a.status === "done" ? "done" : ""}" data-id="${a.id}">
+      <label>
+        <input type="checkbox" data-action-toggle="${a.id}" ${a.status === "done" ? "checked" : ""} />
+        <span>${esc(a.title)}</span>
+      </label>
+      <div class="action-meta">
+        ${a.due_date ? `<span>${fmtDue(a.due_date)}</span>` : ""}
+        <button type="button" aria-label="Delete action" data-action-delete="${a.id}">×</button>
+      </div>
+    </div>`;
+  actionsList.innerHTML = [
+    open.map(row).join(""),
+    done.length ? `<div class="actions-done-label">Done</div>${done.map(row).join("")}` : "",
+  ].join("");
+
+  actionsList.querySelectorAll("[data-action-toggle]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const id = input.dataset.actionToggle;
+      await updateAction(id, { status: input.checked ? "done" : "open" });
+    });
+  });
+  actionsList.querySelectorAll("[data-action-delete]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await deleteAction(button.dataset.actionDelete);
+    });
+  });
+}
+
+async function loadActions() {
+  if (!actionsList) return;
+  try {
+    const resp = await fetch("/api/actions?limit=100");
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderActions(data.actions);
+  } catch (err) {
+    setActionStatus(`Actions failed: ${err.message}`);
+  }
+}
+
+async function createAction(payload) {
+  const resp = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (resp.status === 401) { location.href = "/login"; return null; }
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+async function updateAction(id, payload) {
+  try {
+    const resp = await fetch(`/api/actions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    await loadActions();
+  } catch (err) {
+    setActionStatus(`Update failed: ${err.message}`);
+  }
+}
+
+async function deleteAction(id) {
+  try {
+    const resp = await fetch(`/api/actions/${id}`, { method: "DELETE" });
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    await loadActions();
+  } catch (err) {
+    setActionStatus(`Delete failed: ${err.message}`);
+  }
+}
+
+function extractReportActions(markdown) {
+  const lines = (markdown || "").split(/\r?\n/);
+  const out = [];
+  let capture = false;
+  for (const line of lines) {
+    const clean = line.trim();
+    if (/^#{1,6}\s+/.test(clean)) {
+      capture = /action|next|plan|week/i.test(clean);
+      continue;
+    }
+    if (!capture) continue;
+    const item = clean.match(/^(?:[-*]|\d+[.)])\s+(.*)$/);
+    if (item && item[1]) out.push(item[1].replace(/\*\*/g, "").trim());
+  }
+  if (!out.length) {
+    for (const line of lines) {
+      const item = line.trim().match(/^(?:[-*]|\d+[.)])\s+(.*)$/);
+      if (item && item[1]) out.push(item[1].replace(/\*\*/g, "").trim());
+    }
+  }
+  return [...new Set(out.map((x) => x.replace(/\.$/, "").trim()).filter(Boolean))].slice(0, 6);
+}
+
+if (actionForm) {
+  actionForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = actionTitle.value.trim();
+    if (!title) return;
+    const label = actionForm.querySelector("button").textContent;
+    actionForm.querySelector("button").disabled = true;
+    try {
+      await createAction({ title, due_date: actionDue.value || null });
+      actionTitle.value = "";
+      actionDue.value = "";
+      setActionStatus("");
+      await loadActions();
+    } catch (err) {
+      setActionStatus(`Add failed: ${err.message}`);
+    } finally {
+      actionForm.querySelector("button").disabled = false;
+      actionForm.querySelector("button").textContent = label;
+    }
+  });
+}
+
+if (importActions) {
+  importActions.addEventListener("click", async () => {
+    importActions.disabled = true;
+    const label = importActions.textContent;
+    importActions.textContent = "Adding…";
+    try {
+      const resp = await fetch("/api/reports?kind=weekly&limit=1");
+      if (resp.status === 401) { location.href = "/login"; return; }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      const report = data.reports && data.reports[0];
+      const items = extractReportActions(report && report.content);
+      const existing = new Set(cachedActions.map((a) => a.title.toLowerCase()));
+      const fresh = items.filter((item) => !existing.has(item.toLowerCase()));
+      for (const title of fresh) await createAction({ title, source_report_id: report.id });
+      setActionStatus(fresh.length ? `Added ${fresh.length} actions` : "No new actions found");
+      await loadActions();
+    } catch (err) {
+      setActionStatus(`Import failed: ${err.message}`);
+    } finally {
+      importActions.disabled = false;
+      importActions.textContent = label;
+    }
+  });
 }
 
 function renderReports(reports) {
