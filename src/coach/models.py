@@ -107,6 +107,24 @@ class Report(Base):
     content: Mapped[str] = mapped_column(Text)
 
 
+class PushSubscription(Base):
+    """Browser Web Push subscription for report notifications."""
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    endpoint: Mapped[str] = mapped_column(Text, unique=True, index=True)
+    p256dh: Mapped[str] = mapped_column(Text)
+    auth: Mapped[str] = mapped_column(Text)
+    user_agent: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class OAuthToken(Base):
     """Persisted OAuth tokens, one row per provider (e.g. 'strava')."""
 

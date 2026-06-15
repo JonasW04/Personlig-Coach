@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from coach.agents.coordinator import build_options
 from coach.config import settings
 from coach.db import SessionLocal, init_db
-from coach.models import Report
+from coach.models import PushSubscription, Report
 from coach.web import stats
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -208,6 +208,71 @@ async def sync_data() -> JSONResponse | dict:
 
         result = await asyncio.to_thread(sync.run)
         return {"running": False, **result}
+
+
+# ------------------------------------------------------------------ notifications
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+
+@app.get("/api/push/config")
+async def push_config() -> dict:
+    enabled = bool(
+        settings.web_push_vapid_public_key
+        and settings.web_push_vapid_private_key
+        and settings.web_push_vapid_subject
+    )
+    return {
+        "enabled": enabled,
+        "public_key": settings.web_push_vapid_public_key if enabled else None,
+    }
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(req: PushSubscriptionRequest, request: Request) -> dict:
+    if not settings.web_push_vapid_public_key or not settings.web_push_vapid_private_key:
+        raise HTTPException(400, "Web Push is not configured on the server.")
+
+    user_agent = request.headers.get("user-agent")
+    with SessionLocal() as s:
+        existing = s.execute(
+            select(PushSubscription).where(PushSubscription.endpoint == req.endpoint)
+        ).scalars().first()
+        if existing:
+            existing.p256dh = req.keys.p256dh
+            existing.auth = req.keys.auth
+            existing.user_agent = user_agent
+        else:
+            s.add(PushSubscription(
+                endpoint=req.endpoint,
+                p256dh=req.keys.p256dh,
+                auth=req.keys.auth,
+                user_agent=user_agent,
+            ))
+        s.commit()
+    return {"ok": True}
+
+
+@app.post("/api/push/unsubscribe")
+async def push_unsubscribe(req: PushUnsubscribeRequest) -> dict:
+    with SessionLocal() as s:
+        existing = s.execute(
+            select(PushSubscription).where(PushSubscription.endpoint == req.endpoint)
+        ).scalars().first()
+        if existing:
+            s.delete(existing)
+            s.commit()
+    return {"ok": True}
 
 
 # ----------------------------------------------------------------------- reports

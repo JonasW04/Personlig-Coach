@@ -1,4 +1,4 @@
-const CACHE = "coach-v2";
+const CACHE = "coach-v3";
 const SHELL = [
   ".",
   "index.html",
@@ -37,5 +37,42 @@ self.addEventListener("fetch", (e) => {
           return resp;
         })
     )
+  );
+});
+
+self.addEventListener("push", (e) => {
+  let data = {};
+  if (e.data) {
+    try {
+      data = e.data.json();
+    } catch {
+      data = { body: e.data.text() };
+    }
+  }
+
+  const title = data.title || "Coach";
+  const options = {
+    body: data.body || "New report ready.",
+    icon: "icon.svg",
+    badge: "icon.svg",
+    tag: data.tag || "coach-report",
+    data: { url: data.url || "/" },
+  };
+  e.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = new URL(e.notification.data?.url || "/", self.location.origin).href;
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url.startsWith(self.location.origin) && "focus" in client) {
+          return client.navigate(url).then(() => client.focus());
+        }
+      }
+      if (clients.openWindow) return clients.openWindow(url);
+      return undefined;
+    })
   );
 });

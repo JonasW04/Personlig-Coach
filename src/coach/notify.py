@@ -6,15 +6,29 @@ Notion config + setup lives in coach.integrations.notion.
 """
 from __future__ import annotations
 
+import json
+import logging
 import smtplib
 from email.message import EmailMessage
 
 from coach.config import settings
+from coach.db import SessionLocal
 from coach.integrations import notion
+from coach.models import PushSubscription
+
+log = logging.getLogger("coach.notify")
 
 
 def email_configured() -> bool:
     return bool(settings.smtp_host and settings.email_from and settings.email_to)
+
+
+def web_push_configured() -> bool:
+    return bool(
+        settings.web_push_vapid_public_key
+        and settings.web_push_vapid_private_key
+        and settings.web_push_vapid_subject
+    )
 
 
 def send_email(subject: str, body: str) -> None:
@@ -43,7 +57,63 @@ def channels_configured() -> list[str]:
         used.append("email")
     if notion.notion_configured():
         used.append("notion")
+    if web_push_configured():
+        used.append("web push")
     return used
+
+
+def _push_body(body: str) -> str:
+    for line in body.splitlines():
+        line = line.strip(" -*#\t")
+        if line:
+            return line[:180]
+    return "Open Coach to read the latest report."
+
+
+def send_web_push(subject: str, body: str) -> int:
+    """Send a report notification to every saved browser subscription."""
+    if not web_push_configured():
+        return 0
+
+    try:
+        from pywebpush import WebPushException, webpush
+    except ImportError:
+        log.warning("pywebpush is not installed; skipping web push notifications")
+        return 0
+
+    payload = json.dumps({
+        "title": subject,
+        "body": _push_body(body),
+        "url": "/#reports",
+        "tag": "coach-report",
+    })
+    sent = 0
+    with SessionLocal() as s:
+        subscriptions = s.query(PushSubscription).all()
+        for sub in subscriptions:
+            subscription_info = {
+                "endpoint": sub.endpoint,
+                "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+            }
+            try:
+                webpush(
+                    subscription_info=subscription_info,
+                    data=payload,
+                    vapid_private_key=settings.web_push_vapid_private_key,
+                    vapid_claims={"sub": settings.web_push_vapid_subject},
+                    ttl=60 * 60 * 24,
+                )
+                sent += 1
+            except WebPushException as exc:
+                response = getattr(exc, "response", None)
+                status_code = getattr(response, "status_code", None)
+                if status_code in {404, 410}:
+                    s.delete(sub)
+                    log.info("removed expired web push subscription")
+                else:
+                    log.warning("web push notification failed: %s", exc)
+        s.commit()
+    return sent
 
 
 def send(subject: str, body: str) -> list[str]:
@@ -55,4 +125,7 @@ def send(subject: str, body: str) -> list[str]:
     if notion.notion_configured():
         notion.create_page(subject, body)
         used.append("notion")
+    push_count = send_web_push(subject, body)
+    if push_count:
+        used.append(f"web_push:{push_count}")
     return used

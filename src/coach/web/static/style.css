@@ -232,6 +232,16 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   color: #fff; font: inherit; font-weight: 600; cursor: pointer;
 }
 .primary:disabled { opacity: 0.5; cursor: default; }
+.reports-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.status-line {
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
 
 .report {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
@@ -279,6 +289,7 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 @media (min-width: 720px) {
   .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .stats-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reports-actions { grid-template-columns: 1fr auto; }
 }
 
 @media (min-width: 960px) {

@@ -14,6 +14,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "itsdangerous>=2.0",
     "apscheduler>=3.10",
+    "pywebpush>=2.0",
 ]
 
 [project.scripts]
