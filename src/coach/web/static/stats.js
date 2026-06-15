@@ -95,7 +95,8 @@
     const latestBody = D().latestBody(D().firstDate, D().lastDate);
     if (goal.metric === "weekly_strength_sessions") return weekSummary.liftSessions;
     if (goal.metric === "weekly_active_days") return weekSummary.activeDays;
-    if (goal.metric === "weekly_cardio_minutes") return weekSummary.cardioMin;
+    if (goal.metric === "weekly_cardio_distance") return weekSummary.km;
+    if (goal.metric === "weekly_strength_volume") return weekSummary.tonnage;
     if (goal.metric === "body_weight") return latestBody ? latestBody.weight_kg : null;
     if (goal.metric === "body_fat") return latestBody ? latestBody.fat_ratio_pct : null;
     return null;
@@ -116,8 +117,12 @@
   }
   function fmtGoalValue(value, unit) {
     if (value == null || isNaN(value)) return "--";
-    const dp = unit === "kg" || unit === "%" ? 1 : 0;
-    return `${nf(value, dp)}${unit ? `<span class="unit">${unit}</span>` : ""}`;
+    // Volume targets are large (tens of thousands of kg) — render them compactly
+    // (20k) the way the metric cards do, while body weight stays e.g. 85.0.
+    const str = unit === "kg" && Math.abs(value) >= 1000
+      ? kFmt(value)
+      : nf(value, unit === "kg" || unit === "%" ? 1 : 0);
+    return `${str}${unit ? `<span class="unit">${unit}</span>` : ""}`;
   }
   function goalStatus(goal, current, baseline) {
     const target = goal.target_value;
@@ -131,23 +136,21 @@
       };
     }
     if (goal.direction === "toward") {
-      // Bidirectional target: works whether the user is gaining or losing.
-      // Progress runs from the starting baseline toward the target, so being
-      // below a gain target (or above a loss target) reads as "not there yet"
-      // rather than wrongly counting as "on target".
+      // Bidirectional target: the bar is full ONLY when current === target.
+      // Being either under or over the target shortens it, scaled by how far
+      // the starting baseline sat from the target (a fixed window if unknown).
       const diff = current - target;
+      const floor = goal.unit === "%" ? 2 : 4;
+      const span = Math.max(baseline != null ? Math.abs(baseline - target) : floor, floor);
+      const pct = Math.max(0, Math.min(1, 1 - Math.abs(diff) / span));
       const tol = goal.unit === "%" ? 0.2 : 0.3;
-      const reached = Math.abs(diff) <= tol;
-      let pct = reached ? 1 : 0;
-      if (!reached && baseline != null && baseline !== target) {
-        pct = Math.max(0, Math.min(1, (baseline - current) / (baseline - target)));
-      }
+      const onTarget = Math.abs(diff) <= tol;
       return {
         pct,
-        label: reached
+        label: onTarget
           ? "On target"
           : `${nf(Math.abs(diff), 1)}${goal.unit} ${diff > 0 ? "above" : "below"} target`,
-        state: reached ? "good" : "neutral",
+        state: onTarget ? "good" : "neutral",
       };
     }
     const pct = target ? current / target : 0;
@@ -326,11 +329,6 @@
       CC().barDataset("Cardio", ser.points.map((p) => +(p.cardioMin / 60).toFixed(1)), C.cardio, { stack: "t", radius: 3 }),
       CC().barDataset("Strength", ser.points.map((p) => +(p.strengthMin / 60).toFixed(1)), C.strength, { stack: "t", radius: 5 }),
     ];
-    const cardioTarget = goalTarget("weekly_cardio_minutes");
-    if (cardioTarget != null) {
-      const targetHours = cardioTarget / (ser.daily ? 7 * 60 : 60);
-      datasets.push(targetDataset(ser.daily ? "Cardio target pace" : "Cardio target", +targetHours.toFixed(2), ser.points.length, "#e0a23b"));
-    }
     CC().mount(canvas, {
       type: "bar",
       data: { labels, datasets },
@@ -340,18 +338,31 @@
   function volumeChart(canvas, ser) {
     const C = CC().THEME;
     const labels = ser.points.map((p) => CC().fmtLabel(p.key, ser.daily));
+    const datasets = [CC().barDataset("Volume", ser.points.map((p) => p.tonnage), C.strength, { radius: 5 })];
+    const volTarget = goalTarget("weekly_strength_volume");
+    if (volTarget != null) {
+      // Weekly target → per-bucket pace when the series is bucketed by day.
+      const perBucket = ser.daily ? volTarget / 7 : volTarget;
+      datasets.push(targetDataset(ser.daily ? "Volume target pace" : "Volume target", Math.round(perBucket), ser.points.length, "#e0a23b"));
+    }
     CC().mount(canvas, {
       type: "bar",
-      data: { labels, datasets: [CC().barDataset("Volume", ser.points.map((p) => p.tonnage), C.strength, { radius: 5 })] },
+      data: { labels, datasets },
       options: CC().options({ y: { ticks: { callback: kFmt } } }),
     });
   }
   function distanceChart(canvas, ser) {
     const C = CC().THEME;
     const labels = ser.points.map((p) => CC().fmtLabel(p.key, ser.daily));
+    const datasets = [CC().barDataset("Distance", ser.points.map((p) => +p.km.toFixed(1)), C.cardio, { radius: 5 })];
+    const distTarget = goalTarget("weekly_cardio_distance");
+    if (distTarget != null) {
+      const perBucket = ser.daily ? distTarget / 7 : distTarget;
+      datasets.push(targetDataset(ser.daily ? "Distance target pace" : "Distance target", +perBucket.toFixed(1), ser.points.length, "#e0a23b"));
+    }
     CC().mount(canvas, {
       type: "bar",
-      data: { labels, datasets: [CC().barDataset("Distance", ser.points.map((p) => +p.km.toFixed(1)), C.cardio, { radius: 5 })] },
+      data: { labels, datasets },
       options: CC().options({ y: { ticks: { callback: (v) => v + " km" } } }),
     });
   }
@@ -624,7 +635,12 @@
     const goalsSection = buildGoalsSection();
     const bodySection = buildBodySection(range);
     const timeLegend = [{ c: C.cardio, l: "Cardio" }, { c: C.strength, l: "Strength" }];
-    if (goalTarget("weekly_cardio_minutes") != null) timeLegend.push({ c: "#e0a23b", l: "Target" });
+    const volLegend = goalTarget("weekly_strength_volume") != null
+      ? legendHtml([{ c: C.strength, l: "Volume" }, { c: "#e0a23b", l: "Target" }])
+      : `<span class="unit">kg</span>`;
+    const distLegend = goalTarget("weekly_cardio_distance") != null
+      ? legendHtml([{ c: C.cardio, l: "Distance" }, { c: "#e0a23b", l: "Target" }])
+      : `<span class="unit">km</span>`;
     root.innerHTML = `
       <div class="metric-grid">${metricsFor(s, ctx.prev, ["active", "streak", "sets", "sessions", "shours", "chours", "tonnage", "km"])}</div>
 
@@ -640,11 +656,11 @@
       </div>
       <div class="charts-2">
         <div class="panel">
-          <div class="panel-head"><div><h3>Strength volume</h3><div class="sub">Total kg lifted per ${ser.daily ? "day" : "week"}</div></div><span class="unit">kg</span></div>
+          <div class="panel-head"><div><h3>Strength volume</h3><div class="sub">Total kg lifted per ${ser.daily ? "day" : "week"}</div></div>${volLegend}</div>
           <div class="chart-frame"><canvas id="${volId}"></canvas></div>
         </div>
         <div class="panel">
-          <div class="panel-head"><div><h3>Cardio distance</h3><div class="sub">Distance per ${ser.daily ? "day" : "week"}</div></div><span class="unit">km</span></div>
+          <div class="panel-head"><div><h3>Cardio distance</h3><div class="sub">Distance per ${ser.daily ? "day" : "week"}</div></div>${distLegend}</div>
           <div class="chart-frame"><canvas id="${distId}"></canvas></div>
         </div>
       </div>
