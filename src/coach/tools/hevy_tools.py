@@ -12,7 +12,7 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 from sqlalchemy import func, select
 
 from coach.db import SessionLocal
-from coach.models import Exercise, SetEntry, Workout
+from coach.models import Exercise, SetEntry, Workout, BodyMeasurement
 
 
 def _text(payload) -> dict:
@@ -63,11 +63,29 @@ async def exercise_progression(args) -> dict:
             .order_by(Workout.start_time.asc())
         ).all()
 
+        bws = s.execute(
+            select(BodyMeasurement.measured_at, BodyMeasurement.weight_kg)
+            .where(BodyMeasurement.weight_kg.is_not(None))
+        ).all()
+
+    def get_closest_weight(target_dt: datetime) -> float:
+        if not bws:
+            return 0.0
+        closest = min(bws, key=lambda x: abs((x[0] - target_dt).total_seconds()))
+        return closest[1]
+
     # Best set per session by estimated 1RM (Epley).
     by_session: dict = {}
     for dt, weight, reps, title in rows:
-        if weight is None or reps is None:
+        if reps is None:
             continue
+            
+        if weight is None or weight == 0.0:
+            weight = get_closest_weight(dt)
+            
+        if weight is None or weight == 0.0:
+            continue
+
         e1rm = round(weight * (1 + reps / 30), 1)
         key = dt.date().isoformat() if dt else "unknown"
         cur = by_session.get(key)
@@ -99,6 +117,19 @@ async def weekly_volume(args) -> dict:
             .where(SetEntry.set_type != "warmup")
         ).all()
 
+        bws = s.execute(
+            select(BodyMeasurement.measured_at, BodyMeasurement.weight_kg)
+            .where(BodyMeasurement.weight_kg.is_not(None))
+        ).all()
+
+    def get_closest_weight(target_dt: datetime) -> float:
+        if not bws:
+            return 0.0
+        # If target_dt is naive, and measured_at is aware (or vice-versa), total_seconds() will crash.
+        # But both should be timezone-aware according to models.py DateTime(timezone=True).
+        closest = min(bws, key=lambda x: abs((x[0] - target_dt).total_seconds()))
+        return closest[1]
+
     agg: dict = {}
     for dt, weight, reps in rows:
         if dt is None:
@@ -107,6 +138,10 @@ async def weekly_volume(args) -> dict:
         key = f"{iso.year}-W{iso.week:02d}"
         bucket = agg.setdefault(key, {"week": key, "sets": 0, "tonnage_kg": 0.0})
         bucket["sets"] += 1
+        
+        if weight is None or weight == 0.0:
+            weight = get_closest_weight(dt)
+
         if weight and reps:
             bucket["tonnage_kg"] += weight * reps
     return _text(sorted(agg.values(), key=lambda r: r["week"]))
