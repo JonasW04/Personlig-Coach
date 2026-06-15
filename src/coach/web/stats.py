@@ -7,13 +7,13 @@ charts) is derived client-side in ``static/data.js``.
 """
 from __future__ import annotations
 
-from datetime import date as _date
+from datetime import date as _date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from coach.db import SessionLocal
-from coach.models import Activity, BodyMeasurement, Exercise, Workout
+from coach.models import Activity, Exercise, Workout, BodyMeasurement
 
 
 def _bounds(start: str | None, end: str | None) -> tuple[_date | None, _date | None]:
@@ -40,6 +40,17 @@ def activity(start: str | None = None, end: str | None = None) -> dict:
         return days.setdefault(key, {"date": key, "strength": None, "cardio": None})
 
     with SessionLocal() as s:
+        bws = s.execute(
+            select(BodyMeasurement.measured_at, BodyMeasurement.weight_kg)
+            .where(BodyMeasurement.weight_kg.is_not(None))
+        ).all()
+
+        def get_closest_weight(target_dt: datetime) -> float:
+            if not bws or not target_dt:
+                return 0.0
+            closest = min(bws, key=lambda x: abs((x[0] - target_dt).total_seconds()))
+            return closest[1]
+
         workouts = s.execute(
             select(Workout)
             .options(selectinload(Workout.exercises).selectinload(Exercise.sets))
@@ -54,11 +65,13 @@ def activity(start: str | None = None, end: str | None = None) -> dict:
                 continue
             exercises = []
             for ex in sorted(w.exercises, key=lambda e: e.order_index):
-                sets = [
-                    {"reps": st.reps, "weight": st.weight_kg or 0}
-                    for st in sorted(ex.sets, key=lambda x: x.order_index)
-                    if (st.set_type or "") != "warmup" and st.reps
-                ]
+                sets = []
+                for st in sorted(ex.sets, key=lambda x: x.order_index):
+                    if (st.set_type or "") != "warmup" and st.reps:
+                        w_kg = st.weight_kg
+                        if w_kg is None or w_kg == 0:
+                            w_kg = get_closest_weight(w.start_time)
+                        sets.append({"reps": st.reps, "weight": w_kg})
                 if sets:
                     exercises.append({"name": ex.title, "sets": sets})
             if not exercises:
