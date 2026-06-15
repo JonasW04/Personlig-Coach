@@ -152,6 +152,7 @@
     }).join("");
     const rows = allGoals.map((goal) => `
       <label class="goal-edit-row">
+        <input type="checkbox" data-goal-enabled="${goal.key}" ${goal.enabled ? "checked" : ""} />
         <span>${goal.label}</span>
         <input type="text" inputmode="decimal" data-goal-target="${goal.key}" value="${goal.target_value == null ? "" : goal.target_value}" placeholder="Target" />
         <em>${goal.unit}</em>
@@ -181,6 +182,8 @@
           for (const goal of D().goals()) {
             const input = editor.querySelector(`[data-goal-target="${goal.key}"]`);
             if (input) input.value = goal.target_value == null ? "" : goal.target_value;
+            const enabled = editor.querySelector(`[data-goal-enabled="${goal.key}"]`);
+            if (enabled) enabled.checked = !!goal.enabled;
           }
         }
         function closeEditor() {
@@ -199,9 +202,10 @@
           e.preventDefault();
           const payload = D().goals().map((goal) => {
             const input = editor.querySelector(`[data-goal-target="${goal.key}"]`);
+            const enabled = editor.querySelector(`[data-goal-enabled="${goal.key}"]`);
             const raw = input.value.trim();
             const target = raw === "" ? null : Number(raw.replace(",", "."));
-            return { key: goal.key, enabled: goal.enabled, target_value: Number.isFinite(target) ? target : null };
+            return { key: goal.key, enabled: !!enabled.checked, target_value: Number.isFinite(target) ? target : null };
           });
           const save = editor.querySelector("button[type='submit']");
           const label = save.textContent;
@@ -283,6 +287,8 @@
       borderWidth: 1.8,
       borderDash: [6, 5],
       stack: "target",
+      spanGaps: true,
+      clip: false,
       pointRadius: 0,
       pointHoverRadius: 0,
       tension: 0,
@@ -294,8 +300,8 @@
     const C = CC().THEME;
     const labels = ser.points.map((p) => CC().fmtLabel(p.key, ser.daily));
     const datasets = [
-      CC().barDataset("Strength", ser.points.map((p) => +(p.strengthMin / 60).toFixed(1)), C.strength, { stack: "t", radius: 3 }),
-      CC().barDataset("Cardio", ser.points.map((p) => +(p.cardioMin / 60).toFixed(1)), C.cardio, { stack: "t", radius: 5 }),
+      CC().barDataset("Cardio", ser.points.map((p) => +(p.cardioMin / 60).toFixed(1)), C.cardio, { stack: "t", radius: 3 }),
+      CC().barDataset("Strength", ser.points.map((p) => +(p.strengthMin / 60).toFixed(1)), C.strength, { stack: "t", radius: 5 }),
     ];
     const cardioTarget = goalTarget("weekly_cardio_minutes");
     if (cardioTarget != null) {
@@ -353,6 +359,9 @@
     if (weightTarget != null) {
       datasets.push(targetDataset("Target", weightTarget, pts.length, "#e0a23b"));
     }
+    const weightValues = pts.map((p) => p.weight_kg).filter((v) => v != null);
+    if (weightTarget != null) weightValues.push(weightTarget);
+    const weightPad = weightValues.length ? Math.max(0.4, (Math.max(...weightValues) - Math.min(...weightValues)) * 0.2) : 1;
     CC().mount(canvas, {
       type: "line",
       data: {
@@ -362,7 +371,11 @@
       options: CC().options({
         beginAtZero: false,
         xTicks: 7,
-        y: { ticks: { callback: (v) => v + " kg" } },
+        y: {
+          suggestedMin: weightValues.length ? Math.min(...weightValues) - weightPad : undefined,
+          suggestedMax: weightValues.length ? Math.max(...weightValues) + weightPad : undefined,
+          ticks: { callback: (v) => v + " kg" },
+        },
       }),
     });
   }
@@ -378,6 +391,9 @@
     if (fatTarget != null) {
       datasets.push(targetDataset("Fat % target", fatTarget, pts.length, "#f2c46d", "yPct"));
     }
+    const pctValues = pts.map((p) => p.fat_ratio_pct).filter((v) => v != null);
+    if (fatTarget != null) pctValues.push(fatTarget);
+    const pctPad = pctValues.length ? Math.max(0.5, (Math.max(...pctValues) - Math.min(...pctValues)) * 0.25) : 1;
     const opts = CC().options({
       beginAtZero: false,
       xTicks: 7,
@@ -388,6 +404,8 @@
       grid: { drawOnChartArea: false },
       border: { display: false },
       ticks: { color: C.faint, padding: 8, maxTicksLimit: 5, callback: (v) => v + "%" },
+      suggestedMin: pctValues.length ? Math.min(...pctValues) - pctPad : undefined,
+      suggestedMax: pctValues.length ? Math.max(...pctValues) + pctPad : undefined,
       beginAtZero: false,
     };
     CC().mount(canvas, {
@@ -547,7 +565,7 @@
     const ttId = nid("tt"), volId = nid("vol"), distId = nid("dist");
     const goalsSection = buildGoalsSection();
     const bodySection = buildBodySection(range);
-    const timeLegend = [{ c: C.strength, l: "Strength" }, { c: C.cardio, l: "Cardio" }];
+    const timeLegend = [{ c: C.cardio, l: "Cardio" }, { c: C.strength, l: "Strength" }];
     if (goalTarget("weekly_cardio_minutes") != null) timeLegend.push({ c: "#e0a23b", l: "Target" });
     root.innerHTML = `
       <div class="metric-grid">${metricsFor(s, ctx.prev, ["active", "streak", "sets", "sessions", "shours", "chours", "tonnage", "km"])}</div>
