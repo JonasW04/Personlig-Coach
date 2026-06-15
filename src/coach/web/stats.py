@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from coach.db import SessionLocal
-from coach.models import Activity, Exercise, Workout
+from coach.models import Activity, BodyMeasurement, Exercise, Workout
 
 
 def _bounds(start: str | None, end: str | None) -> tuple[_date | None, _date | None]:
@@ -92,4 +92,26 @@ def activity(start: str | None = None, end: str | None = None) -> dict:
                 cur["minutes"] += minutes
                 cur["km"] = round(cur["km"] + km, 2)
 
-    return {"days": [days[k] for k in sorted(days)]}
+        body_rows = s.execute(
+            select(BodyMeasurement).order_by(BodyMeasurement.measured_at.asc())
+        ).scalars().all()
+
+    body = []
+    for m in body_rows:
+        if m.measured_at is None:
+            continue
+        measured_on = m.measured_at.date()
+        if (start_d and measured_on < start_d) or (end_d and measured_on > end_d):
+            continue
+        body.append({
+            "date": measured_on.isoformat(),
+            "weight_kg": round(m.weight_kg, 2) if m.weight_kg is not None else None,
+            "fat_ratio_pct": round(m.fat_ratio, 2) if m.fat_ratio is not None else None,
+            "fat_mass_kg": round(m.fat_mass_kg, 2) if m.fat_mass_kg is not None else None,
+            "fat_free_mass_kg": round(m.fat_free_mass_kg, 2)
+            if m.fat_free_mass_kg is not None else None,
+            "muscle_mass_kg": round(m.muscle_mass_kg, 2)
+            if m.muscle_mass_kg is not None else None,
+        })
+
+    return {"days": [days[k] for k in sorted(days)], "body": body}

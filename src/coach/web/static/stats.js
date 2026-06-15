@@ -115,6 +115,114 @@
       options: CC().options({ y: { ticks: { callback: (v) => v + " km" } } }),
     });
   }
+  function signed(v, unit, dp = 1) {
+    if (v == null || isNaN(v)) return "--";
+    const n = Number(v);
+    const sign = n > 0 ? "+" : "";
+    return `${sign}${nf(n, dp)}${unit ? `<span class="unit">${unit}</span>` : ""}`;
+  }
+  function bodyDate(iso) {
+    if (!iso) return "";
+    return new Date(iso + "T00:00:00").toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  function bodyDelta(rows, key) {
+    const pts = rows.filter((r) => r[key] != null);
+    if (pts.length < 2) return null;
+    return pts[pts.length - 1][key] - pts[0][key];
+  }
+  function bodyMin(rows, key) {
+    const values = rows.map((r) => r[key]).filter((v) => v != null);
+    return values.length ? Math.min(...values) : null;
+  }
+  function bodyWeightChart(canvas, rows) {
+    const C = CC().THEME;
+    const pts = rows.filter((r) => r.weight_kg != null);
+    CC().mount(canvas, {
+      type: "line",
+      data: {
+        labels: pts.map((p) => CC().fmtLabel(p.date, true)),
+        datasets: [CC().lineDataset("Weight", pts.map((p) => p.weight_kg), C.strength, true)],
+      },
+      options: CC().options({
+        beginAtZero: false,
+        xTicks: 7,
+        y: { ticks: { callback: (v) => v + " kg" } },
+      }),
+    });
+  }
+  function bodyCompositionChart(canvas, rows) {
+    const C = CC().THEME;
+    const pts = rows.filter((r) => r.muscle_mass_kg != null || r.fat_mass_kg != null);
+    CC().mount(canvas, {
+      type: "line",
+      data: {
+        labels: pts.map((p) => CC().fmtLabel(p.date, true)),
+        datasets: [
+          CC().lineDataset("Muscle", pts.map((p) => p.muscle_mass_kg), C.good, false),
+          CC().lineDataset("Fat", pts.map((p) => p.fat_mass_kg), "#e0a23b", false),
+        ],
+      },
+      options: CC().options({
+        beginAtZero: false,
+        xTicks: 7,
+        y: { ticks: { callback: (v) => v + " kg" } },
+      }),
+    });
+  }
+
+  function buildBodySection(range) {
+    const C = CC().THEME;
+    const rows = D().bodySlice(range.start, range.end);
+    const latest = rows.length ? rows[rows.length - 1] : null;
+    const weightId = nid("body-weight");
+    const compId = nid("body-comp");
+    if (!latest) {
+      return {
+        html: `
+          <div class="section-title"><h3>Body</h3><div class="rule"></div></div>
+          <div class="panel"><div class="empty-block">No body measurements in this range.</div></div>`,
+        mount() {},
+      };
+    }
+
+    const weightChange = bodyDelta(rows, "weight_kg");
+    const fatChange = bodyDelta(rows, "fat_ratio_pct");
+    const compositionLegend = legendHtml([{ c: C.good, l: "Muscle" }, { c: "#e0a23b", l: "Fat" }]);
+    return {
+      html: `
+        <div class="section-title"><h3>Body</h3><div class="rule"></div></div>
+        <div class="body-grid">
+          <div class="panel body-panel">
+            <div class="panel-head">
+              <div><h3>Body weight</h3><div class="sub">Latest ${bodyDate(latest.date)} · ${rows.length} measurements</div></div>
+              <span class="unit">kg</span>
+            </div>
+            <div class="body-metrics">
+              <div class="body-stat"><div class="v">${nf(latest.weight_kg, 1)}<span class="unit">kg</span></div><div class="l">Latest</div></div>
+              <div class="body-stat"><div class="v">${signed(weightChange, "kg", 1)}</div><div class="l">Range change</div></div>
+              <div class="body-stat"><div class="v">${nf(bodyMin(rows, "weight_kg"), 1)}<span class="unit">kg</span></div><div class="l">Range low</div></div>
+            </div>
+            <div class="chart-frame body-chart"><canvas id="${weightId}"></canvas></div>
+          </div>
+          <div class="panel body-panel">
+            <div class="panel-head">
+              <div><h3>Body composition</h3><div class="sub">Muscle and fat mass trend</div></div>
+              ${compositionLegend}
+            </div>
+            <div class="body-metrics">
+              <div class="body-stat"><div class="v">${nf(latest.fat_ratio_pct, 1)}<span class="unit">%</span></div><div class="l">Body fat</div></div>
+              <div class="body-stat"><div class="v">${nf(latest.muscle_mass_kg, 1)}<span class="unit">kg</span></div><div class="l">Muscle mass</div></div>
+              <div class="body-stat"><div class="v">${signed(fatChange, "%", 1)}</div><div class="l">Fat % change</div></div>
+            </div>
+            <div class="chart-frame body-chart"><canvas id="${compId}"></canvas></div>
+          </div>
+        </div>`,
+      mount(root) {
+        bodyWeightChart(root.querySelector("#" + weightId), rows);
+        bodyCompositionChart(root.querySelector("#" + compId), rows);
+      },
+    };
+  }
 
   // ---------- legend helper ----------
   function legendHtml(items) {
@@ -191,6 +299,7 @@
     const { s, ser, range } = ctx;
     const C = CC().THEME;
     const ttId = nid("tt"), volId = nid("vol"), distId = nid("dist");
+    const bodySection = buildBodySection(range);
     root.innerHTML = `
       <div class="metric-grid">${metricsFor(s, ctx.prev, ["active", "streak", "sets", "sessions", "shours", "chours", "tonnage", "km"])}</div>
 
@@ -217,13 +326,16 @@
       <div class="panel" id="ex-panel-a"></div>
 
       <div class="section-title"><h3>Activity</h3><div class="rule"></div></div>
-      <div class="panel"><div id="cal-a"></div></div>`;
+      <div class="panel"><div id="cal-a"></div></div>
+
+      ${bodySection.html}`;
 
     trainingTimeChart(root.querySelector("#" + ttId), ser);
     volumeChart(root.querySelector("#" + volId), ser);
     distanceChart(root.querySelector("#" + distId), ser);
     buildExercisePanel(root.querySelector("#ex-panel-a"), range, { default: "Bench Press" });
     window.CoachCalendar.create(root.querySelector("#cal-a"), { defaultMode: "month", range }).render();
+    bodySection.mount(root);
   }
 
   const LAYOUTS = { snapshot: layoutSnapshot };

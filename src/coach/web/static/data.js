@@ -20,6 +20,7 @@
 
   // ---- live state, populated by load() ----
   let DB = [];
+  let BODY = [];
   let firstDate = iso(TODAY);
   let lastDate = iso(TODAY);
 
@@ -54,9 +55,11 @@
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const json = await resp.json();
     DB = (json.days || []).map(enrich).sort((a, b) => (a.date < b.date ? -1 : 1));
-    firstDate = DB.length ? DB[0].date : iso(TODAY);
+    BODY = (json.body || []).sort((a, b) => (a.date < b.date ? -1 : 1));
+    firstDate = [DB[0]?.date, BODY[0]?.date].filter(Boolean).sort()[0] || iso(TODAY);
     lastDate = iso(TODAY);
     api.DB = DB;
+    api.BODY = BODY;
     api.firstDate = firstDate;
     api.lastDate = lastDate;
   }
@@ -80,6 +83,11 @@
   }
 
   function slice(start, end) { return DB.filter((d) => inRange(d.date, start, end)); }
+  function bodySlice(start, end) { return BODY.filter((d) => inRange(d.date, start, end)); }
+  function latestBody(start, end) {
+    const rows = bodySlice(start, end);
+    return rows.length ? rows[rows.length - 1] : null;
+  }
 
   function summarize(start, end) {
     const rows = slice(start, end);
@@ -247,8 +255,9 @@
   }
 
   const api = {
-    DB, TODAY, iso, parse, addDays, daysBetween,
+    DB, BODY, TODAY, iso, parse, addDays, daysBetween,
     rangeBounds, summarize, series, exerciseList, exerciseSeries,
+    bodySlice, latestBody,
     calendarMonth, heatmap, dayType, monthsAvailable,
     firstDate, lastDate,
     load,
