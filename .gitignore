@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.coach_session
+dist/
+build/
+*.egg-info/

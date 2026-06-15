@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1115" />
+  <title>Coach — Sign in</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <style>
+    :root { --bg:#0f1115; --panel:#171a21; --panel-2:#1f242e; --text:#e7eaf0; --muted:#9aa3b2; --accent:#4f8cff; --border:#272d39; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+      font:16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { display:flex; align-items:center; justify-content:center; min-height:100dvh; padding:24px; }
+    .card { width:100%; max-width:340px; background:var(--panel); border:1px solid var(--border);
+      border-radius:16px; padding:28px 24px; text-align:center; }
+    .logo { width:56px; height:56px; margin:0 auto 12px; display:block; }
+    h1 { font-size:20px; margin:0 0 4px; }
+    p.sub { color:var(--muted); margin:0 0 20px; font-size:14px; }
+    label { display:block; text-align:left; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+    input { width:100%; padding:11px 13px; border-radius:10px; border:1px solid var(--border);
+      background:var(--panel-2); color:var(--text); font:inherit; }
+    input:focus { outline:none; border-color:var(--accent); }
+    button { width:100%; margin-top:20px; padding:12px; border:none; border-radius:10px;
+      background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+    .error { color:#ff6b6b; font-size:13px; margin-top:14px; min-height:18px; }
+  </style>
+</head>
+<body>
+  <form class="card" method="POST" action="/login">
+    <img class="logo" src="icon.svg" alt="" />
+    <h1>Coach</h1>
+    <p class="sub">Sign in to your dashboard</p>
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" autocapitalize="none" />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" />
+    <button type="submit">Sign in</button>
+    <div class="error" id="error"></div>
+  </form>
+  <script>
+    if (new URLSearchParams(location.search).has("error")) {
+      document.getElementById("error").textContent = "Incorrect username or password.";
+    }
+  </script>
+</body>
+</html>
