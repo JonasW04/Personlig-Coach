@@ -298,7 +298,7 @@ header h1 {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 12px 16px 0;
+  margin: 16px 16px 0;
   padding: 13px 16px;
   border-radius: var(--r);
   border: 1px solid transparent;
@@ -381,6 +381,14 @@ header h1 {
 }
 .action-chip.met { background: rgba(70, 201, 139, 0.15); color: var(--good); }
 .action-row.auto { border-left: 2px solid var(--strength-dim); }
+
+/* ---------- reviews page (centered reading column) ---------- */
+.reviews-page {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+}
 
 /* ---------- reports block ---------- */
 .reports-block { margin-top: 16px; }
