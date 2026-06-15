@@ -1,9 +1,14 @@
-const CACHE = "coach-v3";
+const CACHE = "coach-v4";
 const SHELL = [
   ".",
   "index.html",
   "style.css",
+  "stats.css",
   "app.js",
+  "data.js",
+  "charts.js",
+  "calendar.js",
+  "stats.js",
   "manifest.webmanifest",
   "icon.svg",
 ];

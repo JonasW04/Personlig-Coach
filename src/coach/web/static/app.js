@@ -11,7 +11,6 @@ const $ = (id) => document.getElementById(id);
 const TITLES = { chat: "Coach", stats: "Dashboard", reports: "Reviews" };
 const VIEWS = new Set(Object.keys(TITLES));
 let currentView = "chat";
-let statsLoaded = false;
 let syncPromise = null;
 
 function switchView(view) {
@@ -21,8 +20,9 @@ function switchView(view) {
     b.classList.toggle("active", b.dataset.view === view);
   }
   $("title").textContent = TITLES[view];
-  if (view === "stats" && !statsLoaded) loadStats();
+  if (view === "stats") loadStats();
   if (view === "reports") loadReports();
+  history.replaceState(null, "", "#" + view);
 }
 
 document.querySelectorAll("#tabbar button").forEach((b) =>
@@ -40,7 +40,7 @@ function showEmptyState() {
   if (messages.children.length === 0) {
     const el = document.createElement("div");
     el.className = "empty";
-    el.textContent = "Ask about your training, recovery, or progress.";
+    el.innerHTML = "<strong>Ask your coach</strong>Questions about your training, recovery, or progress — grounded in your synced data.";
     messages.appendChild(el);
   }
 }
@@ -117,124 +117,40 @@ input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
 });
 
-// ---------- stats ----------
-const GRID = "#272d39";
-const MUTED = "#9aa3b2";
-const ACCENT = "#4f8cff";
-const PANEL = "#171a21";
-const TEXT = "#e7eaf0";
-const STATS_WINDOW_WEEKS = 12;
-const charts = {};
+// ---------- stats (design dashboard, live data) ----------
 const syncButton = $("sync-data");
-let statsMetaText = "Loading stats...";
-let syncStatusText = "";
+let statsStarted = false;
 
-function chartBase() {
-  Chart.defaults.color = MUTED;
-  Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
-  Chart.defaults.borderColor = GRID;
-}
-function axes(extra = {}) {
-  return {
-    x: {
-      grid: { display: false },
-      border: { color: GRID },
-      ticks: { color: MUTED, maxRotation: 0, autoSkip: true },
-    },
-    y: {
-      grid: { color: GRID },
-      border: { color: GRID },
-      ticks: { color: MUTED },
-      ...extra,
-    },
-  };
-}
-function chartOptions({ legend = false, y = {} } = {}) {
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: "index", intersect: false },
-    plugins: {
-      legend: {
-        display: legend,
-        labels: { color: MUTED, boxWidth: 10, boxHeight: 10, usePointStyle: true },
-      },
-      tooltip: {
-        backgroundColor: PANEL,
-        borderColor: GRID,
-        borderWidth: 1,
-        titleColor: TEXT,
-        bodyColor: TEXT,
-        displayColors: true,
-      },
-    },
-    scales: axes(y),
-  };
-}
-function draw(key, cfg) {
-  if (charts[key]) charts[key].destroy();
-  charts[key] = new Chart($(`chart-${key}`), cfg);
-}
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[ch]));
-}
-function formatNumber(value, options = {}) {
-  if (value == null || Number.isNaN(Number(value))) return "--";
-  return Number(value).toLocaleString(undefined, options);
-}
-function formatUnit(value, unit, options = {}) {
-  const formatted = formatNumber(value, options);
-  return formatted === "--" ? formatted : `${formatted} ${unit}`;
-}
-function fmtShortDate(iso) {
-  if (!iso) return "";
-  return new Date(`${iso}T00:00:00`).toLocaleDateString([], { month: "short", day: "numeric" });
-}
-function card(value, label, meta, tone = "") {
-  const toneClass = tone ? ` card-${tone}` : "";
-  return (
-    `<article class="card${toneClass}">` +
-    `<div class="label">${escapeHtml(label)}</div>` +
-    `<div class="value">${escapeHtml(value)}</div>` +
-    `<div class="meta">${escapeHtml(meta)}</div>` +
-    `</article>`
-  );
-}
-function updateStatsMeta() {
-  const text = [statsMetaText, syncStatusText].filter(Boolean).join(" | ");
-  $("stats-meta").textContent = text || "Waiting for synced data";
-}
-function renderStatsMeta(summary, hasData) {
-  const parts = [];
-  if (summary.latest_weigh_in) parts.push(`Last weigh-in ${fmtShortDate(summary.latest_weigh_in)}`);
-  if (hasData) parts.push(`${STATS_WINDOW_WEEKS} weeks synced`);
-  statsMetaText = parts.join(" | ") || "Waiting for synced data";
-  updateStatsMeta();
-}
 function setSyncStatus(text) {
-  syncStatusText = text;
-  updateStatsMeta();
+  const m = $("stats-meta");
+  if (m) m.textContent = text || "";
 }
+
+async function loadStats() {
+  try {
+    await window.CoachData.ready;
+  } catch (err) {
+    setSyncStatus(`Couldn't load stats: ${err.message}`);
+    return;
+  }
+  if (!statsStarted) { window.CoachStats.init(); statsStarted = true; }
+  else window.CoachStats.render();
+}
+
 function syncSummary(data) {
   if (data.running) return data.message || "Sync already running.";
   const results = data.results || [];
   const synced = results.filter((r) => r.status === "synced");
-  if (!synced.length) return "Sync complete";
+  if (!synced.length) return "Up to date";
   return `Updated ${synced.map((r) => r.source).join(", ")}`;
 }
+
 async function syncData({ silent = false } = {}) {
   if (syncPromise) return syncPromise;
 
-  const label = syncButton.textContent;
-  syncButton.disabled = true;
-  syncButton.textContent = "Syncing...";
-  setSyncStatus(silent ? "Updating in background..." : "Syncing data...");
+  const label = syncButton ? syncButton.textContent : "";
+  if (syncButton) { syncButton.disabled = true; syncButton.textContent = "Syncing…"; }
+  if (!silent) setSyncStatus("Syncing data…");
 
   syncPromise = (async () => {
     try {
@@ -244,16 +160,14 @@ async function syncData({ silent = false } = {}) {
       if (!resp.ok && resp.status !== 202) throw new Error(data.detail || `HTTP ${resp.status}`);
 
       setSyncStatus(syncSummary(data));
-      if (resp.status !== 202 && currentView === "stats") await loadStats();
-    } catch (err) {
-      if (currentView === "stats" || !silent) {
-        setSyncStatus(`Sync failed: ${err.message}`);
-      } else {
-        setSyncStatus("");
+      if (resp.status !== 202) {
+        await window.CoachData.reload();
+        if (statsStarted) window.CoachStats.render();
       }
+    } catch (err) {
+      if (!silent || currentView === "stats") setSyncStatus(`Sync failed: ${err.message}`);
     } finally {
-      syncButton.disabled = false;
-      syncButton.textContent = label;
+      if (syncButton) { syncButton.disabled = false; syncButton.textContent = label; }
       syncPromise = null;
     }
   })();
@@ -261,140 +175,7 @@ async function syncData({ silent = false } = {}) {
   return syncPromise;
 }
 
-async function loadStats() {
-  const resp = await fetch(`/api/stats?weeks=${STATS_WINDOW_WEEKS}`);
-  if (resp.status === 401) { location.href = "/login"; return; }
-  const d = await resp.json();
-  statsLoaded = true;
-  chartBase();
-
-  const s = d.summary || {};
-  const body = d.body || [];
-  const strengthWeekly = d.strength_weekly || [];
-  const cardioWeekly = d.cardio_weekly || [];
-  const hasData = body.length || strengthWeekly.length || cardioWeekly.length;
-  renderStatsMeta(s, hasData);
-
-  $("summary-cards").innerHTML = [
-    card(
-      s.latest_weight_kg != null ? `${formatNumber(s.latest_weight_kg, { maximumFractionDigits: 1 })} kg` : "--",
-      "Latest weight",
-      s.latest_weigh_in ? `Logged ${fmtShortDate(s.latest_weigh_in)}` : "No weigh-in yet",
-      "primary"
-    ),
-    card(
-      s.latest_fat_pct != null ? `${formatNumber(s.latest_fat_pct, { maximumFractionDigits: 1 })}%` : "--",
-      "Body fat",
-      "Current estimate",
-      "amber"
-    ),
-    card(
-      formatNumber(s.training_days_7d),
-      "Training days",
-      "Past 7 days",
-      "green"
-    ),
-    card(
-      formatUnit(s.cardio_km_7d, "km", { maximumFractionDigits: 1 }),
-      "Cardio",
-      "Past 7 days",
-      "green"
-    ),
-    card(
-      formatUnit(s.tonnage_7d_kg, "kg"),
-      "Tonnage",
-      "Past 7 days",
-      "primary"
-    ),
-    card(
-      formatNumber(s.lift_sessions_7d),
-      "Lift sessions",
-      "Past 7 days"
-    ),
-  ].join("");
-
-  $("stats-empty").hidden = !!hasData;
-
-  draw("weight", {
-    type: "line",
-    data: {
-      labels: body.map((r) => r.date),
-      datasets: [{
-        data: body.map((r) => r.weight_kg),
-        borderColor: ACCENT,
-        backgroundColor: "rgba(79, 140, 255, 0.14)",
-        tension: 0.3,
-        spanGaps: true,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        fill: true,
-      }],
-    },
-    options: chartOptions(),
-  });
-
-  draw("body", {
-    type: "line",
-    data: {
-      labels: body.map((r) => r.date),
-      datasets: [
-        {
-          label: "Muscle",
-          data: body.map((r) => r.muscle_mass_kg),
-          borderColor: "#46c98b",
-          backgroundColor: "transparent",
-          tension: 0.3,
-          spanGaps: true,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-        },
-        {
-          label: "Fat",
-          data: body.map((r) => r.fat_mass_kg),
-          borderColor: "#e0a23b",
-          backgroundColor: "transparent",
-          tension: 0.3,
-          spanGaps: true,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-        },
-      ],
-    },
-    options: chartOptions({ legend: true }),
-  });
-
-  draw("tonnage", {
-    type: "bar",
-    data: {
-      labels: strengthWeekly.map((r) => r.week),
-      datasets: [{
-        data: strengthWeekly.map((r) => r.tonnage_kg),
-        backgroundColor: ACCENT,
-        borderRadius: 5,
-        barPercentage: 0.72,
-        categoryPercentage: 0.74,
-      }],
-    },
-    options: chartOptions({ y: { beginAtZero: true } }),
-  });
-
-  draw("cardio", {
-    type: "bar",
-    data: {
-      labels: cardioWeekly.map((r) => r.week),
-      datasets: [{
-        data: cardioWeekly.map((r) => r.distance_km),
-        backgroundColor: "#46c98b",
-        borderRadius: 5,
-        barPercentage: 0.72,
-        categoryPercentage: 0.74,
-      }],
-    },
-    options: chartOptions({ y: { beginAtZero: true } }),
-  });
-}
-
-syncButton.addEventListener("click", () => syncData());
+if (syncButton) syncButton.addEventListener("click", () => syncData());
 
 // ---------- reports ----------
 let reportKind = "readiness";
