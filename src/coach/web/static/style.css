@@ -42,6 +42,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Prevent class-level display rules from overriding the [hidden] attribute */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -300,11 +302,14 @@ header h1 {
   padding: 13px 16px;
   border-radius: var(--r);
   border: 1px solid transparent;
+  background: none;
   cursor: pointer;
   text-align: left;
   font: inherit;
   width: calc(100% - 32px);
   transition: opacity .15s;
+  -webkit-appearance: none;
+  appearance: none;
 }
 .verdict-card:hover { opacity: 0.85; }
 .verdict-train  { background: rgba(70, 201, 139, 0.12); border-color: rgba(70, 201, 139, 0.3); }
