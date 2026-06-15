@@ -767,4 +767,7 @@ initPushNotifications();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => ensureServiceWorker());
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    window.location.reload();
+  });
 }

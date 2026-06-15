@@ -22,6 +22,7 @@ import uvicorn
 from claude_agent_sdk import AssistantMessage, ClaudeSDKClient, TextBlock
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
+    FileResponse,
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
@@ -42,7 +43,7 @@ from coach.web import stats
 log = logging.getLogger("coach.web")
 
 STATIC_DIR = Path(__file__).parent / "static"
-PUBLIC_PATHS = {"/login", "/logout", "/healthz"}
+PUBLIC_PATHS = {"/login", "/logout", "/healthz", "/sw.js", "/manifest.webmanifest", "/icon.svg"}
 
 
 def _week_start(d: date | None = None) -> date:
@@ -601,6 +602,12 @@ async def set_focus(req: FocusUpdate) -> dict:
     # represent the new focus; the client polls /api/focus for completion.
     asyncio.create_task(_regenerate_reports(("readiness", "weekly")))
     return {**profile, "regenerating": True}
+
+
+@app.get("/sw.js")
+async def get_sw() -> FileResponse:
+    headers = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    return FileResponse(STATIC_DIR / "sw.js", headers=headers, media_type="application/javascript")
 
 
 # Serve the PWA shell. Mounted last so it doesn't shadow API/auth routes.

@@ -1,4 +1,4 @@
-const CACHE = "coach-v19";
+const CACHE = "coach-v20";
 const SHELL = [
   ".",
   "index.html",
@@ -31,17 +31,19 @@ self.addEventListener("fetch", (e) => {
   if (request.method !== "GET" || new URL(request.url).pathname.startsWith("/api/")) {
     return;
   }
-  // Cache-first for the static app shell, with a network fallback that refreshes it.
+  // Stale-While-Revalidate strategy: serve from cache immediately, fetch fresh in background.
   e.respondWith(
-    caches.match(request).then(
-      (cached) =>
-        cached ||
-        fetch(request).then((resp) => {
-          const copy = resp.clone();
-          caches.open(CACHE).then((c) => c.put(request, copy));
-          return resp;
-        })
-    )
+    caches.open(CACHE).then((cache) => {
+      return cache.match(request).then((cached) => {
+        const fetched = fetch(request)
+          .then((resp) => {
+            cache.put(request, resp.clone());
+            return resp;
+          })
+          .catch(() => cached); // fallback to cached on network failure
+        return cached || fetched;
+      });
+    })
   );
 });
 
