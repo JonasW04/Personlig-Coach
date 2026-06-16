@@ -68,6 +68,10 @@ async def _handler(args):
     return {"seen": args["value"]}
 
 
+async def _memory_handler(args):
+    return {"saved": args["note"]}
+
+
 class TestGeminiCoachSession(unittest.IsolatedAsyncioTestCase):
     async def test_tool_call_loop_emits_steps_and_final_text(self):
         tool = ToolSpec(
@@ -89,7 +93,7 @@ class TestGeminiCoachSession(unittest.IsolatedAsyncioTestCase):
             patch("coach.agents.gemini.build_system_prompt", return_value="System"),
             patch("coach.agents.gemini.coach_tools", return_value=[tool]),
         ):
-            session = GeminiCoachSession(history=[("user", "Earlier"), ("assistant", "Reply")])
+            session = GeminiCoachSession()
             events = [event async for event in session.events("Now")]
 
         self.assertEqual(events, [StepEvent("Using fake data"), TextEvent("Final answer")])
@@ -129,3 +133,88 @@ class TestGeminiCoachSession(unittest.IsolatedAsyncioTestCase):
             assistant_message["tool_calls"][0]["extra_content"],
             {"google": {"thought_signature": "sig-abc"}},
         )
+
+    async def test_follow_up_can_answer_without_tools(self):
+        client = _FakeClient([_text_response("Use the same plan, but make it shorter.")])
+
+        with (
+            patch("coach.agents.gemini.get_client", return_value=client),
+            patch("coach.agents.gemini.build_system_prompt", return_value="System"),
+            patch("coach.agents.gemini.coach_tools", return_value=[]),
+        ):
+            session = GeminiCoachSession(
+                history=[
+                    ("user", "Plan my week from my latest data."),
+                    ("assistant", "Here is the plan based on your recent sessions."),
+                ]
+            )
+            events = [event async for event in session.events("Make that more concise.")]
+
+        self.assertEqual(events, [TextEvent("Use the same plan, but make it shorter.")])
+        self.assertEqual(len(client.completions.calls), 1)
+        self.assertNotIn("tools", client.completions.calls[0])
+
+    async def test_data_follow_up_goes_directly_to_tool_loop(self):
+        tool = ToolSpec(
+            name="fake_tool",
+            description="Fake tool",
+            parameters=object_schema({"value": {"type": "string"}}, required=["value"]),
+            handler=_handler,
+            step_label="Using fake data",
+        )
+        client = _FakeClient(
+            [
+                _tool_response("fake_tool", {"value": "fresh"}),
+                _text_response("Fresh answer"),
+            ]
+        )
+
+        with (
+            patch("coach.agents.gemini.get_client", return_value=client),
+            patch("coach.agents.gemini.build_system_prompt", return_value="System"),
+            patch("coach.agents.gemini.coach_tools", return_value=[tool]),
+        ):
+            session = GeminiCoachSession(
+                history=[
+                    ("user", "How was my lifting last week?"),
+                    ("assistant", "Your lifting was solid."),
+                ]
+            )
+            events = [event async for event in session.events("What about cardio?")]
+
+        self.assertEqual(events, [StepEvent("Using fake data"), TextEvent("Fresh answer")])
+        self.assertEqual(len(client.completions.calls), 2)
+        self.assertEqual(client.completions.calls[0]["tools"][0]["function"]["name"], "fake_tool")
+
+    async def test_memory_write_follow_up_keeps_tool_access(self):
+        tool = ToolSpec(
+            name="remember",
+            description="Remember a durable fact",
+            parameters=object_schema({"note": {"type": "string"}}, required=["note"]),
+            handler=_memory_handler,
+            step_label="Updating memory",
+        )
+        client = _FakeClient(
+            [
+                _tool_response("remember", {"note": "My left knee is cranky."}),
+                _text_response("I'll remember that."),
+            ]
+        )
+
+        with (
+            patch("coach.agents.gemini.get_client", return_value=client),
+            patch("coach.agents.gemini.build_system_prompt", return_value="System"),
+            patch("coach.agents.gemini.coach_tools", return_value=[tool]),
+        ):
+            session = GeminiCoachSession(
+                history=[
+                    ("user", "How should I squat today?"),
+                    ("assistant", "Keep it submaximal."),
+                ]
+            )
+            events = [
+                event async for event in session.events("Remember that my left knee is cranky.")
+            ]
+
+        self.assertEqual(events, [StepEvent("Updating memory"), TextEvent("I'll remember that.")])
+        self.assertEqual(client.completions.calls[0]["tools"][0]["function"]["name"], "remember")

@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # Cheap/fast model for tool-less utility transforms (directive expansion,
     # action-plan extraction).
     coach_utility_model: str = "gemini-3.5-flash"
-    coach_reasoning_effort: str = "low"
+    coach_reasoning_effort: str = "high"
 
     # Email notifications (SMTP). For Gmail, use an App Password as smtp_password.
     smtp_host: str = ""

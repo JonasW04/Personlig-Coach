@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
@@ -13,6 +14,37 @@ from coach.tools.specs import ToolSpec
 log = logging.getLogger("coach.agents.gemini")
 
 MAX_TOOL_ROUNDS = 8
+FOLLOW_UP_CONTEXT_ONLY_PROMPT = """This is a follow-up in an ongoing coaching chat.
+
+Answer using only the conversation history and prior tool results already present
+in the messages. Do not claim to have checked fresh data. If the user asks for
+information that is not in the existing context, briefly say what extra data
+would be needed."""
+
+MEMORY_WRITE_PATTERN = re.compile(
+    r"\b(remember|keep in mind|don't forget|do not forget|save that|note that)\b",
+    re.IGNORECASE,
+)
+FOLLOW_UP_DATA_PATTERN = re.compile(
+    r"\b("
+    r"today|tonight|yesterday|tomorrow|this week|last week|next week|"
+    r"latest|recent|current|now|new|fresh|updated|since|"
+    r"cardio|run|running|ride|cycling|strava|pace|distance|"
+    r"workout|lifting|hevy|bench|squat|deadlift|press|"
+    r"body|weight|weigh|withings|fat|muscle|"
+    r"sleep|recovery|readiness|hrv|heart rate|"
+    r"volume|tonnage|sets|reps|exercise|session|sessions"
+    r")\b",
+    re.IGNORECASE,
+)
+FOLLOW_UP_CONTEXT_PATTERN = re.compile(
+    r"\b("
+    r"make (that|it)|rewrite|rephrase|summari[sz]e|shorter|more concise|"
+    r"bullet|bullets|table|format|explain|what do you mean|"
+    r"expand|elaborate|simplify|same|above|previous|last answer|your answer"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +91,66 @@ def _chat_kwargs(
     if settings.coach_reasoning_effort:
         kwargs["reasoning_effort"] = settings.coach_reasoning_effort
     return kwargs
+
+
+def _has_prior_assistant_text(messages: list[dict[str, Any]]) -> bool:
+    return any(
+        msg.get("role") == "assistant" and str(msg.get("content") or "").strip()
+        for msg in messages[:-1]
+    )
+
+
+def _is_memory_write_request(prompt: str) -> bool:
+    return bool(MEMORY_WRITE_PATTERN.search(prompt))
+
+
+def _is_context_only_follow_up(prompt: str) -> bool:
+    text = " ".join(prompt.strip().lower().split())
+    if not text or FOLLOW_UP_DATA_PATTERN.search(text):
+        return False
+    if FOLLOW_UP_CONTEXT_PATTERN.search(text):
+        return True
+    words = text.split()
+    context_starts = (
+        "why",
+        "how so",
+        "what do you mean",
+        "can you explain",
+        "could you explain",
+        "make it",
+        "make that",
+        "turn that",
+        "put that",
+        "format that",
+        "same",
+        "yes",
+        "ok",
+        "okay",
+        "no",
+    )
+    return len(words) <= 8 and text.startswith(context_starts)
+
+
+def _should_try_follow_up_fast_path(
+    messages: list[dict[str, Any]], prompt: str
+) -> bool:
+    return (
+        _has_prior_assistant_text(messages)
+        and not _is_memory_write_request(prompt)
+        and _is_context_only_follow_up(prompt)
+    )
+
+
+def _follow_up_fast_path_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not messages or messages[0].get("role") != "system":
+        return [{"role": "system", "content": FOLLOW_UP_CONTEXT_ONLY_PROMPT}, *messages]
+    system = {
+        **messages[0],
+        "content": f"{messages[0].get('content', '')}\n\n{FOLLOW_UP_CONTEXT_ONLY_PROMPT}",
+    }
+    return [system, *messages[1:]]
 
 
 def _tool_call_extra_content(call: Any) -> dict[str, Any] | None:
@@ -126,6 +218,20 @@ class GeminiCoachSession:
     ) -> AsyncIterator[AgentEvent]:
         self.messages.append({"role": "user", "content": prompt})
         seen_steps: set[str] = set()
+
+        if _should_try_follow_up_fast_path(self.messages, prompt):
+            response = await get_client().chat.completions.create(
+                **_chat_kwargs(
+                    model=self.model,
+                    messages=_follow_up_fast_path_messages(self.messages),
+                    max_tokens=max_tokens,
+                )
+            )
+            content = response.choices[0].message.content or ""
+            if content:
+                self.messages.append({"role": "assistant", "content": content})
+                yield TextEvent(content)
+                return
 
         for _ in range(MAX_TOOL_ROUNDS):
             response = await get_client().chat.completions.create(

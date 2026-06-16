@@ -91,7 +91,7 @@ function addWorkingCard() {
   const card = document.createElement("div");
   card.className = "working";
   card.innerHTML =
-    `<div class="working-title"><div class="working-dot"></div><span>Working through your data</span></div>` +
+    `<div class="working-title"><div class="working-dot"></div><span>Thinking</span></div>` +
     `<div class="working-steps"></div>`;
   messages.appendChild(card);
   messages.scrollTop = messages.scrollHeight;
