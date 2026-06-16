@@ -16,6 +16,7 @@ dependencies = [
     "itsdangerous>=2.0",
     "apscheduler>=3.10",
     "pywebpush>=2.0",
+    "garminconnect>=0.2.25",
 ]
 
 [project.scripts]
@@ -26,6 +27,7 @@ coach-readiness = "coach.readiness:main"
 coach-web = "coach.web.app:main"
 coach-strava-auth = "coach.integrations.strava_auth:main"
 coach-withings-auth = "coach.integrations.withings_auth:main"
+coach-garmin-auth = "coach.integrations.garmin_auth:main"
 
 [build-system]
 requires = ["hatchling"]

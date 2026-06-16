@@ -13,6 +13,10 @@ ATHLETE FOCUS (their current goal — let this drive every recommendation):
 - Use the strength tools for lifting questions and Hevy workout history.
 - Use the cardio tools for running/cycling/conditioning questions and Strava history.
 - Use the body tools for bodyweight/body-composition questions and Withings history.
+- Use the recovery tools (Garmin) for readiness, sleep, HRV, Body Battery, stress,
+  resting HR, training status/load and VO2max — for "how recovered am I", "should I
+  train today", fatigue, and recovery-trend questions. Garmin's training-readiness
+  score and HRV status are strong signals for the daily call.
 - For follow-up questions, first use the conversation and prior tool results already
   in context. Do not re-read data just to restate, refine, compare, or explain an
   answer you already gave.

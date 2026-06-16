@@ -1,3 +1,4 @@
+from coach.tools.garmin_tools import GARMIN_TOOLS
 from coach.tools.hevy_tools import HEVY_TOOLS
 from coach.tools.memory_tools import MEMORY_TOOLS
 from coach.tools.strava_tools import STRAVA_TOOLS
@@ -7,6 +8,7 @@ ALL_TOOLS = [
     *HEVY_TOOLS,
     *STRAVA_TOOLS,
     *WITHINGS_TOOLS,
+    *GARMIN_TOOLS,
     *MEMORY_TOOLS,
 ]
 

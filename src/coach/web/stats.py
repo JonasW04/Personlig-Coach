@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from coach.db import SessionLocal
-from coach.models import Activity, BodyMeasurement, Exercise, Workout
+from coach.models import Activity, BodyMeasurement, Exercise, GarminDaily, Workout
 
 
 def _bounds(start: str | None, end: str | None) -> tuple[_date | None, _date | None]:
@@ -115,3 +115,52 @@ def activity(start: str | None = None, end: str | None = None) -> dict:
         })
 
     return {"days": [days[k] for k in sorted(days)], "body": body}
+
+
+def _round(value, ndigits=1):
+    return round(value, ndigits) if value is not None else None
+
+
+def _health_day(m: GarminDaily) -> dict:
+    return {
+        "date": m.day.isoformat(),
+        "training_readiness": m.training_readiness_score,
+        "training_readiness_level": m.training_readiness_level,
+        "training_readiness_feedback": m.training_readiness_feedback,
+        "training_status": m.training_status,
+        "acute_load": _round(m.acute_load),
+        "vo2max": _round(m.vo2max),
+        "sleep_hours": _round(m.sleep_seconds / 3600) if m.sleep_seconds else None,
+        "sleep_score": _round(m.sleep_score, 0),
+        "deep_sleep_hours": _round(m.deep_sleep_seconds / 3600) if m.deep_sleep_seconds else None,
+        "rem_sleep_hours": _round(m.rem_sleep_seconds / 3600) if m.rem_sleep_seconds else None,
+        "light_sleep_hours": _round(m.light_sleep_seconds / 3600) if m.light_sleep_seconds else None,
+        "hrv": _round(m.hrv_last_night_avg),
+        "hrv_status": m.hrv_status,
+        "hrv_baseline_low": _round(m.hrv_baseline_low),
+        "hrv_baseline_high": _round(m.hrv_baseline_high),
+        "body_battery_high": m.body_battery_high,
+        "body_battery_low": m.body_battery_low,
+        "avg_stress": _round(m.avg_stress, 0),
+        "resting_hr": m.resting_hr,
+        "steps": m.steps,
+        "intensity_moderate": m.intensity_minutes_moderate,
+        "intensity_vigorous": m.intensity_minutes_vigorous,
+    }
+
+
+def health(start: str | None = None, end: str | None = None) -> dict:
+    """Return ``{"days": [...]}`` of Garmin recovery data, oldest first.
+
+    One entry per synced day, ordered for trend charts; the latest entry doubles
+    as the dashboard's current-state snapshot.
+    """
+    start_d, end_d = _bounds(start, end)
+    with SessionLocal() as s:
+        q = select(GarminDaily).order_by(GarminDaily.day.asc())
+        if start_d:
+            q = q.where(GarminDaily.day >= start_d)
+        if end_d:
+            q = q.where(GarminDaily.day <= end_d)
+        rows = s.execute(q).scalars().all()
+    return {"days": [_health_day(m) for m in rows]}

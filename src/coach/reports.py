@@ -37,6 +37,25 @@ Recommend what to prioritise and what to go easy on, against my current focus. N
 recovery red flags. No long analysis.
 """
 
+HEALTH_PROMPT = """Give me a recovery & health read from my Garmin data. This drives
+my training decision for today, so be concrete.
+
+Start with EXACTLY one line, nothing before it:
+Verdict: <Recovered | Moderate | Compromised> — <a few words on the main driver>
+
+Then tight sections (use the recovery tools — pull a trend, not just today):
+- Recovery now: Garmin training-readiness score & level, HRV (value vs. baseline +
+  status), Body Battery, sleep last night (duration, score, deep/REM), resting HR.
+- Trend (last 7-14 days): is HRV/readiness/sleep/resting-HR improving, stable, or
+  degrading? Call out accumulating fatigue or a recovery rebound.
+- Training load: training status and acute load — am I building, maintaining, or
+  overreaching? VO2max trend if it moved.
+- What to do today: how hard to go and what to prioritise, judged against my focus.
+  Flag clear red flags (suppressed HRV, poor sleep streak, rising resting HR).
+
+Be specific with numbers and dates. Keep it scannable.
+"""
+
 REVIEW_PROMPT = """Produce my weekly training review. Use all relevant data tools and cover:
 - strength (Hevy): volume, key lifts and 1RM trends, stalls, and progression for next week
 - cardio (Strava): aerobic load this week and whether it's interfering with recovery
@@ -74,6 +93,7 @@ REVIEW:
 _SPECS = {
     "readiness": (READINESS_PROMPT, None, "Daily readiness"),
     "weekly": (REVIEW_PROMPT, settings.coach_review_model, "Weekly training review"),
+    "health": (HEALTH_PROMPT, None, "Health & recovery"),
 }
 
 

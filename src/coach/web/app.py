@@ -424,6 +424,11 @@ async def get_stats(start: str | None = None, end: str | None = None) -> dict:
     return payload
 
 
+@app.get("/api/health")
+async def get_health(start: str | None = None, end: str | None = None) -> dict:
+    return await asyncio.to_thread(stats.health, start, end)
+
+
 class GoalUpdate(BaseModel):
     key: str
     target_value: float | None = None
@@ -691,8 +696,8 @@ class GenerateRequest(BaseModel):
 
 @app.post("/api/reports/generate")
 async def generate_report(req: GenerateRequest) -> dict:
-    if req.kind not in ("readiness", "weekly"):
-        raise HTTPException(400, "kind must be 'readiness' or 'weekly'")
+    if req.kind not in ("readiness", "weekly", "health"):
+        raise HTTPException(400, "kind must be 'readiness', 'weekly' or 'health'")
     from coach import reports
 
     report = await reports.generate_and_store(req.kind)

@@ -5,7 +5,7 @@ Schedule on the VPS with cron, e.g. nightly:
 """
 from coach.config import settings
 from coach.db import SessionLocal, init_db
-from coach.integrations import hevy, strava, withings
+from coach.integrations import garmin, hevy, strava, withings
 from coach.models import OAuthToken
 
 
@@ -64,6 +64,30 @@ def run() -> dict:
             "status": "skipped",
             "count": 0,
             "message": "Skipping Withings (not authorized — run `coach-withings-auth`).",
+        })
+
+    if garmin.is_authorized():
+        try:
+            count = garmin.sync()
+            results.append({
+                "source": "garmin",
+                "status": "synced",
+                "count": count,
+                "message": f"Synced {count} days of Garmin health data.",
+            })
+        except Exception as exc:  # noqa: BLE001 - one bad source shouldn't fail the sync
+            results.append({
+                "source": "garmin",
+                "status": "error",
+                "count": 0,
+                "message": f"Garmin sync failed: {exc}",
+            })
+    else:
+        results.append({
+            "source": "garmin",
+            "status": "skipped",
+            "count": 0,
+            "message": "Skipping Garmin (not authorized — run `coach-garmin-auth`).",
         })
 
     return {"results": results}

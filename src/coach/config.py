@@ -8,6 +8,12 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     hevy_api_key: str = ""
 
+    # Garmin Connect (unofficial API). Credentials are only used once by
+    # `coach-garmin-auth` to mint a session; the session token is then stored in
+    # the DB and reused, so we don't log in (and risk rate-limiting) on every sync.
+    garmin_email: str = ""
+    garmin_password: str = ""
+
     # Strava OAuth app credentials (https://www.strava.com/settings/api)
     strava_client_id: str = ""
     strava_client_secret: str = ""

@@ -93,6 +93,71 @@ class BodyMeasurement(Base):
     hydration_kg: Mapped[float | None] = mapped_column(Float)
 
 
+class GarminDaily(Base):
+    """One day of Garmin Connect health data (recovery-focused).
+
+    Garmin is an unofficial API, so we sync a curated set of training-relevant
+    metrics into typed columns for the dashboard + read tools, and keep the full
+    fetched payload in ``raw_json`` so the coach can dig into anything we don't
+    surface in the UI. One row per calendar day; re-syncing a day overwrites it.
+    """
+
+    __tablename__ = "garmin_daily"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+
+    # Sleep (seconds + 0-100 score)
+    sleep_seconds: Mapped[int | None] = mapped_column(Integer)
+    deep_sleep_seconds: Mapped[int | None] = mapped_column(Integer)
+    light_sleep_seconds: Mapped[int | None] = mapped_column(Integer)
+    rem_sleep_seconds: Mapped[int | None] = mapped_column(Integer)
+    awake_seconds: Mapped[int | None] = mapped_column(Integer)
+    sleep_score: Mapped[float | None] = mapped_column(Float)
+    avg_spo2: Mapped[float | None] = mapped_column(Float)
+    avg_respiration: Mapped[float | None] = mapped_column(Float)
+
+    # HRV (ms) + Garmin's status word (BALANCED / UNBALANCED / LOW / POOR)
+    hrv_last_night_avg: Mapped[float | None] = mapped_column(Float)
+    hrv_weekly_avg: Mapped[float | None] = mapped_column(Float)
+    hrv_status: Mapped[str | None] = mapped_column(String)
+    hrv_baseline_low: Mapped[float | None] = mapped_column(Float)
+    hrv_baseline_high: Mapped[float | None] = mapped_column(Float)
+
+    # Body Battery (0-100)
+    body_battery_high: Mapped[int | None] = mapped_column(Integer)
+    body_battery_low: Mapped[int | None] = mapped_column(Integer)
+    body_battery_charged: Mapped[int | None] = mapped_column(Integer)
+    body_battery_drained: Mapped[int | None] = mapped_column(Integer)
+
+    # Stress (0-100)
+    avg_stress: Mapped[float | None] = mapped_column(Float)
+    max_stress: Mapped[float | None] = mapped_column(Float)
+
+    # Recovery / training (Garmin's own daily readiness + training status)
+    training_readiness_score: Mapped[int | None] = mapped_column(Integer)
+    training_readiness_level: Mapped[str | None] = mapped_column(String)
+    training_readiness_feedback: Mapped[str | None] = mapped_column(String)
+    training_status: Mapped[str | None] = mapped_column(String)
+    acute_load: Mapped[float | None] = mapped_column(Float)  # acute training load
+    vo2max: Mapped[float | None] = mapped_column(Float)  # running VO2max estimate
+    vo2max_cycling: Mapped[float | None] = mapped_column(Float)
+
+    # Daily activity / cardiovascular
+    resting_hr: Mapped[int | None] = mapped_column(Integer)
+    steps: Mapped[int | None] = mapped_column(Integer)
+    calories_total: Mapped[int | None] = mapped_column(Integer)
+    calories_active: Mapped[int | None] = mapped_column(Integer)
+    intensity_minutes_moderate: Mapped[int | None] = mapped_column(Integer)
+    intensity_minutes_vigorous: Mapped[int | None] = mapped_column(Integer)
+
+    # Full fetched payload (json) so the coach can reach data we don't display.
+    raw_json: Mapped[str | None] = mapped_column(Text)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class Report(Base):
     """A generated coaching report (daily readiness or weekly review), persisted so
     the web UI can show history."""

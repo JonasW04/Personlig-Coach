@@ -9,7 +9,7 @@ if (!sessionId) {
 const $ = (id) => document.getElementById(id);
 
 // ---------- tab navigation ----------
-const TITLES = { chat: "Coach", stats: "Dashboard", reports: "Reviews" };
+const TITLES = { chat: "Coach", stats: "Activity", health: "Health", reports: "Reviews" };
 const VIEWS = new Set(Object.keys(TITLES));
 let currentView = "chat";
 let syncPromise = null;
@@ -20,10 +20,11 @@ function switchView(view) {
   for (const b of document.querySelectorAll("#tabbar button")) {
     b.classList.toggle("active", b.dataset.view === view);
   }
-  document.body.classList.remove("view-chat", "view-stats", "view-reports");
+  document.body.classList.remove("view-chat", "view-stats", "view-health", "view-reports");
   document.body.classList.add(`view-${view}`);
   $("title").textContent = TITLES[view];
   if (view === "stats") loadStats();
+  if (view === "health") loadHealth();
   if (view === "reports") { loadFocus(); loadMemories(); loadPlan(); loadReadinessHero(); loadReports(); }
   history.replaceState(null, "", "#" + view);
 }
@@ -307,6 +308,8 @@ let statsStarted = false;
 function setSyncStatus(text) {
   const m = $("stats-meta");
   if (m) m.textContent = text || "";
+  const h = $("health-meta");
+  if (h) h.textContent = text || "";
 }
 
 async function loadStats() {
@@ -319,6 +322,18 @@ async function loadStats() {
   if (!statsStarted) { window.CoachStats.init(); statsStarted = true; }
   else window.CoachStats.render();
 }
+
+// ---------- health (Garmin recovery dashboard) ----------
+const healthSyncButton = $("health-sync");
+let healthStarted = false;
+
+function loadHealth() {
+  if (!window.CoachHealth) return;
+  if (!healthStarted) { window.CoachHealth.init(); healthStarted = true; }
+  else window.CoachHealth.render();
+}
+
+if (healthSyncButton) healthSyncButton.addEventListener("click", () => syncData());
 
 function syncSummary(data) {
   if (data.running) return data.message || "Sync already running.";
@@ -346,6 +361,7 @@ async function syncData({ silent = false } = {}) {
       if (resp.status !== 202) {
         await window.CoachData.reload();
         if (statsStarted) window.CoachStats.render();
+        if (healthStarted && window.CoachHealth) window.CoachHealth.reload();
       }
     } catch (err) {
       if (!silent || currentView === "stats") setSyncStatus(`Sync failed: ${err.message}`);

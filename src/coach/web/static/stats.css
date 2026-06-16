@@ -347,6 +347,14 @@
 
 .empty-block { border: 1px dashed var(--line); border-radius: var(--r); padding: 30px; text-align: center; color: var(--faint); font-size: 13px; background: var(--bg-2); }
 
+/* ---- health insight ---- */
+.health-insight .report-when { color: var(--faint); font-size: 11.5px; margin-bottom: 8px; }
+.health-insight .report-md { font-size: 13.5px; line-height: 1.55; color: var(--text); }
+.health-insight .report-md h1, .health-insight .report-md h2, .health-insight .report-md h3 { font-size: 14px; margin: 12px 0 6px; }
+.health-insight .report-md p { margin: 6px 0; }
+.health-insight .report-md ul { margin: 6px 0; padding-left: 18px; }
+.health-insight .report-md li { margin: 3px 0; }
+
 /* body measurements */
 .body-grid { display: grid; gap: 16px; }
 .body-panel { gap: 10px; }
