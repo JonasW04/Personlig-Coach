@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import unittest
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,11 +17,32 @@ def _text_response(text: str):
     return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
-def _tool_response(name: str, args: dict, call_id: str = "call_1"):
+def _tool_response(
+    name: str,
+    args: dict,
+    call_id: str = "call_1",
+    extra_content: dict | None = None,
+):
+    call_kwargs = {
+        "id": call_id,
+        "type": "function",
+        "function": SimpleNamespace(name=name, arguments=json.dumps(args)),
+    }
+    if extra_content is not None:
+        call_kwargs["extra_content"] = extra_content
+    call = SimpleNamespace(
+        **call_kwargs,
+    )
+    message = SimpleNamespace(content=None, tool_calls=[call])
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+def _tool_response_with_model_extra(name: str, args: dict, call_id: str = "call_1"):
     call = SimpleNamespace(
         id=call_id,
         type="function",
         function=SimpleNamespace(name=name, arguments=json.dumps(args)),
+        model_extra={"extra_content": {"google": {"thought_signature": "sig-abc"}}},
     )
     message = SimpleNamespace(content=None, tool_calls=[call])
     return SimpleNamespace(choices=[SimpleNamespace(message=message)])
@@ -32,7 +54,7 @@ class _FakeCompletions:
         self.calls = []
 
     async def create(self, **kwargs):
-        self.calls.append(kwargs)
+        self.calls.append(deepcopy(kwargs))
         return self.responses.pop(0)
 
 
@@ -77,3 +99,33 @@ class TestGeminiCoachSession(unittest.IsolatedAsyncioTestCase):
             {"role": "tool", "tool_call_id": "call_1", "content": '{"seen": "abc"}'},
         )
         self.assertEqual(session.messages[-1], {"role": "assistant", "content": "Final answer"})
+
+    async def test_preserves_gemini_thought_signature_on_tool_calls(self):
+        tool = ToolSpec(
+            name="fake_tool",
+            description="Fake tool",
+            parameters=object_schema({"value": {"type": "string"}}, required=["value"]),
+            handler=_handler,
+            step_label="Using fake data",
+        )
+        client = _FakeClient(
+            [
+                _tool_response_with_model_extra("fake_tool", {"value": "abc"}),
+                _text_response("Final answer"),
+            ]
+        )
+
+        with (
+            patch("coach.agents.gemini.get_client", return_value=client),
+            patch("coach.agents.gemini.build_system_prompt", return_value="System"),
+            patch("coach.agents.gemini.coach_tools", return_value=[tool]),
+        ):
+            session = GeminiCoachSession()
+            events = [event async for event in session.events("Now")]
+
+        self.assertEqual(events, [StepEvent("Using fake data"), TextEvent("Final answer")])
+        assistant_message = client.completions.calls[1]["messages"][-2]
+        self.assertEqual(
+            assistant_message["tool_calls"][0]["extra_content"],
+            {"google": {"thought_signature": "sig-abc"}},
+        )

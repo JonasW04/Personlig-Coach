@@ -61,6 +61,34 @@ def _chat_kwargs(
     return kwargs
 
 
+def _tool_call_extra_content(call: Any) -> dict[str, Any] | None:
+    extra_content = getattr(call, "extra_content", None)
+    if extra_content is None:
+        model_extra = getattr(call, "model_extra", None)
+        if isinstance(model_extra, dict):
+            extra_content = model_extra.get("extra_content")
+    if extra_content is None and isinstance(call, dict):
+        extra_content = call.get("extra_content")
+    if hasattr(extra_content, "model_dump"):
+        extra_content = extra_content.model_dump(exclude_none=True)
+    return extra_content if isinstance(extra_content, dict) else None
+
+
+def _serialize_tool_call(call: Any) -> dict[str, Any]:
+    payload = {
+        "id": call.id,
+        "type": call.type,
+        "function": {
+            "name": call.function.name,
+            "arguments": call.function.arguments or "{}",
+        },
+    }
+    extra_content = _tool_call_extra_content(call)
+    if extra_content:
+        payload["extra_content"] = extra_content
+    return payload
+
+
 async def _execute_tool(tool: ToolSpec, args: dict[str, Any]) -> str:
     try:
         result = await tool.handler(args)
@@ -122,17 +150,7 @@ class GeminiCoachSession:
                 {
                     "role": "assistant",
                     "content": content or None,
-                    "tool_calls": [
-                        {
-                            "id": call.id,
-                            "type": call.type,
-                            "function": {
-                                "name": call.function.name,
-                                "arguments": call.function.arguments or "{}",
-                            },
-                        }
-                        for call in tool_calls
-                    ],
+                    "tool_calls": [_serialize_tool_call(call) for call in tool_calls],
                 }
             )
 
