@@ -44,10 +44,11 @@ Start with EXACTLY one line, nothing before it:
 Verdict: <Recovered | Moderate | Compromised> — <a few words on the main driver>
 
 Then tight sections (use the recovery tools — pull a trend, not just today):
-- Recovery now: Garmin training-readiness score & level, HRV (value vs. baseline +
-  status), Body Battery, sleep last night (duration, score, deep/REM), resting HR.
-- Trend (last 7-14 days): is HRV/readiness/sleep/resting-HR improving, stable, or
-  degrading? Call out accumulating fatigue or a recovery rebound.
+- Recovery now: HRV (value vs. baseline + status), Body Battery, sleep last night
+  (duration, score, deep/REM), resting HR. Include Garmin training-readiness score
+  & level only if present (some watches don't report it — don't dwell on it if absent).
+- Trend (last 7-14 days): is HRV/sleep/resting-HR improving, stable, or degrading?
+  Call out accumulating fatigue or a recovery rebound.
 - Training load: training status and acute load — am I building, maintaining, or
   overreaching? VO2max trend if it moved.
 - What to do today: how hard to go and what to prioritise, judged against my focus.

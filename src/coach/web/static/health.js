@@ -40,6 +40,16 @@
     return new Date(iso + "T00:00:00").toLocaleDateString([], { month: "short", day: "numeric" });
   }
 
+  // Garmin status keys like "PRODUCTIVE_2" → "Productive".
+  function prettyStatus(s) {
+    if (!s) return "--";
+    return String(s)
+      .split("_")
+      .filter((w) => !/^\d+$/.test(w))
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ");
+  }
+
   // ---------- data ----------
   async function fetchData() {
     loadError = null;
@@ -168,7 +178,7 @@
     if (ts && ts.training_status) {
       cards.push(metric({
         label: "Training status",
-        value: `<span style="font-size:18px">${esc(ts.training_status)}</span>`,
+        value: `<span style="font-size:18px">${esc(prettyStatus(ts.training_status))}</span>`,
         accent: levelAccent(ts.training_status),
         meta: ts.acute_load != null ? `acute load ${nf(ts.acute_load)}` : "",
       }));
@@ -315,7 +325,7 @@
     if (sub) sub.textContent = rangeLabel(days);
     const C = CC().THEME;
 
-    const readyId = nid("ready"), sleepId = nid("sleep"), hrvId = nid("hrv");
+    const loadId = nid("load"), sleepId = nid("sleep"), hrvId = nid("hrv");
     const bbId = nid("bb"), rhrId = nid("rhr"), stressId = nid("stress");
 
     content.innerHTML = `
@@ -332,8 +342,8 @@
 
       <div class="section-title"><h3>Recovery trends</h3><div class="rule"></div></div>
       <div class="panel">
-        <div class="panel-head"><div><h3>Training readiness</h3><div class="sub">Garmin readiness score per day</div></div>${legendHtml([{ c: C.good, l: "Readiness" }])}</div>
-        <div class="chart-frame tall"><canvas id="${readyId}"></canvas></div>
+        <div class="panel-head"><div><h3>Training load</h3><div class="sub">Acute training load (7-day) per day</div></div>${legendHtml([{ c: C.strength, l: "Acute load" }])}</div>
+        <div class="chart-frame tall"><canvas id="${loadId}"></canvas></div>
       </div>
       <div class="charts-2">
         <div class="panel">
@@ -358,7 +368,7 @@
         </div>
       </div>`;
 
-    lineChart(content.querySelector("#" + readyId), days, "training_readiness", C.good, { label: "Readiness", beginAtZero: true });
+    lineChart(content.querySelector("#" + loadId), days, "acute_load", C.strength, { label: "Acute load", beginAtZero: true });
     sleepChart(content.querySelector("#" + sleepId), days);
     hrvChart(content.querySelector("#" + hrvId), days);
     lineChart(content.querySelector("#" + bbId), days, "body_battery_high", C.good, { label: "Body Battery", beginAtZero: true });

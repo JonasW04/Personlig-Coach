@@ -188,8 +188,8 @@ def fetch_day(client: Garmin, day: date) -> dict[str, Any]:
     map_ = latest.get("latestTrainingStatusData") or {}
     if isinstance(map_, dict) and map_:
         first = next(iter(map_.values()), {}) or {}
-        out["training_status"] = first.get("trainingStatusFeedbackPhrase") or _status_word(
-            first.get("trainingStatus")
+        out["training_status"] = _status_word(first.get("trainingStatus")) or _clean_status_phrase(
+            first.get("trainingStatusFeedbackPhrase")
         )
         out["acute_load"] = _num(first.get("acuteTrainingLoad"))
     load_balance = (status or {}).get("mostRecentTrainingLoadBalance") or {}
@@ -243,6 +243,15 @@ def _status_word(code: Any) -> str | None:
         return mapping.get(int(code))
     except (TypeError, ValueError):
         return None
+
+
+def _clean_status_phrase(phrase: Any) -> str | None:
+    """Turn a Garmin feedback key like 'PRODUCTIVE_2' into a readable 'Productive'."""
+    if not isinstance(phrase, str) or not phrase:
+        return None
+    words = [w for w in phrase.split("_") if not w.isdigit()]
+    cleaned = " ".join(w.capitalize() for w in words)
+    return cleaned or None
 
 
 def _has_signal(row: dict[str, Any]) -> bool:
