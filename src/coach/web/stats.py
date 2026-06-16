@@ -129,7 +129,11 @@ def _health_day(m: GarminDaily) -> dict:
         "training_readiness_feedback": m.training_readiness_feedback,
         "training_status": m.training_status,
         "acute_load": _round(m.acute_load),
+        "chronic_load": _round(m.chronic_load),
+        "acwr": _round(m.acwr, 2),
+        "acwr_status": m.acwr_status,
         "vo2max": _round(m.vo2max),
+        "fitness_age": _round(m.fitness_age, 0),
         "sleep_hours": _round(m.sleep_seconds / 3600) if m.sleep_seconds else None,
         "sleep_score": _round(m.sleep_score, 0),
         "deep_sleep_hours": _round(m.deep_sleep_seconds / 3600) if m.deep_sleep_seconds else None,
@@ -143,9 +147,12 @@ def _health_day(m: GarminDaily) -> dict:
         "body_battery_low": m.body_battery_low,
         "avg_stress": _round(m.avg_stress, 0),
         "resting_hr": m.resting_hr,
+        "resting_hr_7d_avg": m.resting_hr_7d_avg,
         "steps": m.steps,
         "intensity_moderate": m.intensity_minutes_moderate,
         "intensity_vigorous": m.intensity_minutes_vigorous,
+        "respiration": _round(m.avg_sleep_respiration, 0),
+        "spo2": _round(m.avg_sleep_spo2, 0),
     }
 
 

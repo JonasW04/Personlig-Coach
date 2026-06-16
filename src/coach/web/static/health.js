@@ -162,26 +162,65 @@
     }
 
     // VO2max
-    const vo2 = latestVal("vo2max");
-    if (vo2 != null) {
-      cards.push(metric({ label: "VO₂max", value: nf(vo2, 1), accent: "cardio" }));
+    const vo2d = latest("vo2max");
+    if (vo2d != null) {
+      const fa = vo2d.fitness_age;
+      cards.push(metric({
+        label: "VO₂max",
+        value: nf(vo2d.vo2max, 1),
+        accent: "cardio",
+        meta: fa != null ? `fitness age ${nf(fa)}` : "",
+      }));
     }
 
-    // Resting HR
-    const rhr = latestVal("resting_hr");
-    if (rhr != null) {
-      cards.push(metric({ label: "Resting HR", value: nf(rhr), unit: "bpm", accent: "cardio" }));
+    // Resting HR (with 7-day baseline if present)
+    const rhrd = latest("resting_hr");
+    if (rhrd != null) {
+      const avg7 = rhrd.resting_hr_7d_avg;
+      cards.push(metric({
+        label: "Resting HR",
+        value: nf(rhrd.resting_hr),
+        unit: "bpm",
+        accent: "cardio",
+        meta: avg7 != null ? `7-day avg ${nf(avg7)}` : "",
+      }));
     }
 
-    // Training status / load
+    // Training status / load + ACWR
     const ts = latest("training_status");
     if (ts && ts.training_status) {
+      const bits = [];
+      if (ts.acute_load != null) bits.push(`acute ${nf(ts.acute_load)}`);
+      if (ts.acwr != null) bits.push(`ACWR ${nf(ts.acwr, 2)}`);
       cards.push(metric({
         label: "Training status",
         value: `<span style="font-size:18px">${esc(prettyStatus(ts.training_status))}</span>`,
         accent: levelAccent(ts.training_status),
-        meta: ts.acute_load != null ? `acute load ${nf(ts.acute_load)}` : "",
+        meta: bits.join(" · "),
       }));
+    }
+
+    // ACWR (acute:chronic workload ratio) — sweet spot ~0.8-1.3
+    const acwrd = latest("acwr");
+    if (acwrd != null && acwrd.acwr != null) {
+      cards.push(metric({
+        label: "Load ratio (ACWR)",
+        value: nf(acwrd.acwr, 2),
+        accent: levelAccent(acwrd.acwr_status) || "good",
+        meta: acwrd.acwr_status ? prettyStatus(acwrd.acwr_status) : "",
+      }));
+    }
+
+    // Overnight breathing rate
+    const resp = latestVal("respiration");
+    if (resp != null) {
+      cards.push(metric({ label: "Sleep respiration", value: nf(resp), unit: "br/min", accent: "strength" }));
+    }
+
+    // Overnight blood oxygen
+    const spo2 = latestVal("spo2");
+    if (spo2 != null) {
+      cards.push(metric({ label: "Sleep SpO₂", value: nf(spo2), unit: "%", accent: "good" }));
     }
 
     // Avg stress
@@ -208,6 +247,27 @@
       type: "line",
       data: { labels, datasets: [CC().lineDataset(opts.label || key, data, color, opts.fill !== false)] },
       options: CC().options({ beginAtZero: opts.beginAtZero === true, xTicks: 7, y: opts.y || {} }),
+    });
+  }
+
+  // Acute load (filled) vs chronic baseline (dashed line).
+  function loadChart(canvas, days) {
+    if (!canvas) return;
+    const C = CC().THEME;
+    const labels = days.map((d) => CC().fmtLabel(d.date, true));
+    const datasets = [CC().lineDataset("Acute load", days.map((d) => d.acute_load), C.strength, true)];
+    if (days.some((d) => d.chronic_load != null)) {
+      datasets.push({
+        label: "Chronic load", data: days.map((d) => d.chronic_load),
+        borderColor: CC().alpha(C.muted, 0.8), borderWidth: 1.5, borderDash: [5, 4],
+        tension: 0.3, spanGaps: true, pointRadius: 0, pointHoverRadius: 0,
+        fill: false, backgroundColor: "transparent",
+      });
+    }
+    CC().mount(canvas, {
+      type: "line",
+      data: { labels, datasets },
+      options: CC().options({ beginAtZero: true, xTicks: 7 }),
     });
   }
 
@@ -327,6 +387,12 @@
 
     const loadId = nid("load"), sleepId = nid("sleep"), hrvId = nid("hrv");
     const bbId = nid("bb"), rhrId = nid("rhr"), stressId = nid("stress");
+    const vo2Id = nid("vo2"), acwrId = nid("acwr"), respId = nid("resp"), spo2Id = nid("spo2");
+
+    const hasVo2 = days.some((d) => d.vo2max != null);
+    const hasAcwr = days.some((d) => d.acwr != null);
+    const hasResp = days.some((d) => d.respiration != null);
+    const hasSpo2 = days.some((d) => d.spo2 != null);
 
     content.innerHTML = `
       <div class="panel">
@@ -342,10 +408,18 @@
 
       <div class="section-title"><h3>Recovery trends</h3><div class="rule"></div></div>
       <div class="panel">
-        <div class="panel-head"><div><h3>Training load</h3><div class="sub">Acute training load (7-day) per day</div></div>${legendHtml([{ c: C.strength, l: "Acute load" }])}</div>
+        <div class="panel-head"><div><h3>Training load</h3><div class="sub">Acute vs. chronic (baseline) load per day</div></div>${legendHtml([{ c: C.strength, l: "Acute load" }, { c: C.muted, l: "Chronic load" }])}</div>
         <div class="chart-frame tall"><canvas id="${loadId}"></canvas></div>
       </div>
       <div class="charts-2">
+        ${hasAcwr ? `<div class="panel">
+          <div class="panel-head"><div><h3>Load ratio (ACWR)</h3><div class="sub">Acute:chronic — sweet spot 0.8–1.3</div></div>${legendHtml([{ c: C.cardio, l: "ACWR" }])}</div>
+          <div class="chart-frame"><canvas id="${acwrId}"></canvas></div>
+        </div>` : ""}
+        ${hasVo2 ? `<div class="panel">
+          <div class="panel-head"><div><h3>VO₂max</h3><div class="sub">Aerobic fitness estimate</div></div>${legendHtml([{ c: C.cardio, l: "VO₂max" }])}</div>
+          <div class="chart-frame"><canvas id="${vo2Id}"></canvas></div>
+        </div>` : ""}
         <div class="panel">
           <div class="panel-head"><div><h3>Sleep</h3><div class="sub">Stages per night</div></div>${legendHtml([{ c: C.strength, l: "Deep" }, { c: C.cardio, l: "REM" }, { c: C.muted, l: "Light" }])}</div>
           <div class="chart-frame"><canvas id="${sleepId}"></canvas></div>
@@ -362,17 +436,29 @@
           <div class="panel-head"><div><h3>Resting HR</h3><div class="sub">Beats per minute</div></div>${legendHtml([{ c: C.cardio, l: "Resting HR" }])}</div>
           <div class="chart-frame"><canvas id="${rhrId}"></canvas></div>
         </div>
+        ${hasResp ? `<div class="panel">
+          <div class="panel-head"><div><h3>Sleep respiration</h3><div class="sub">Overnight breaths per minute</div></div>${legendHtml([{ c: C.strength, l: "Respiration" }])}</div>
+          <div class="chart-frame"><canvas id="${respId}"></canvas></div>
+        </div>` : ""}
+        ${hasSpo2 ? `<div class="panel">
+          <div class="panel-head"><div><h3>Sleep SpO₂</h3><div class="sub">Overnight blood oxygen</div></div>${legendHtml([{ c: C.good, l: "SpO₂" }])}</div>
+          <div class="chart-frame"><canvas id="${spo2Id}"></canvas></div>
+        </div>` : ""}
         <div class="panel">
           <div class="panel-head"><div><h3>Stress</h3><div class="sub">Average daily stress</div></div>${legendHtml([{ c: "#e0a23b", l: "Stress" }])}</div>
           <div class="chart-frame"><canvas id="${stressId}"></canvas></div>
         </div>
       </div>`;
 
-    lineChart(content.querySelector("#" + loadId), days, "acute_load", C.strength, { label: "Acute load", beginAtZero: true });
+    loadChart(content.querySelector("#" + loadId), days);
+    if (hasAcwr) lineChart(content.querySelector("#" + acwrId), days, "acwr", C.cardio, { label: "ACWR", beginAtZero: true });
+    if (hasVo2) lineChart(content.querySelector("#" + vo2Id), days, "vo2max", C.cardio, { label: "VO₂max", fill: false, beginAtZero: false });
     sleepChart(content.querySelector("#" + sleepId), days);
     hrvChart(content.querySelector("#" + hrvId), days);
     lineChart(content.querySelector("#" + bbId), days, "body_battery_high", C.good, { label: "Body Battery", beginAtZero: true });
     lineChart(content.querySelector("#" + rhrId), days, "resting_hr", C.cardio, { label: "Resting HR", fill: false, beginAtZero: false });
+    if (hasResp) lineChart(content.querySelector("#" + respId), days, "respiration", C.strength, { label: "Respiration", fill: false, beginAtZero: false });
+    if (hasSpo2) lineChart(content.querySelector("#" + spo2Id), days, "spo2", C.good, { label: "SpO₂", fill: false, beginAtZero: false });
     lineChart(content.querySelector("#" + stressId), days, "avg_stress", "#e0a23b", { label: "Stress", beginAtZero: true });
 
     wireInsight(content);

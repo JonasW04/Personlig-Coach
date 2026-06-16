@@ -139,16 +139,25 @@ class GarminDaily(Base):
     training_readiness_feedback: Mapped[str | None] = mapped_column(String)
     training_status: Mapped[str | None] = mapped_column(String)
     acute_load: Mapped[float | None] = mapped_column(Float)  # acute training load
+    chronic_load: Mapped[float | None] = mapped_column(Float)  # chronic (baseline) load
+    acwr: Mapped[float | None] = mapped_column(Float)  # acute:chronic workload ratio
+    acwr_status: Mapped[str | None] = mapped_column(String)  # e.g. OPTIMAL / HIGH / LOW
     vo2max: Mapped[float | None] = mapped_column(Float)  # running VO2max estimate
     vo2max_cycling: Mapped[float | None] = mapped_column(Float)
+    fitness_age: Mapped[float | None] = mapped_column(Float)
 
     # Daily activity / cardiovascular
     resting_hr: Mapped[int | None] = mapped_column(Integer)
+    resting_hr_7d_avg: Mapped[int | None] = mapped_column(Integer)
     steps: Mapped[int | None] = mapped_column(Integer)
     calories_total: Mapped[int | None] = mapped_column(Integer)
     calories_active: Mapped[int | None] = mapped_column(Integer)
     intensity_minutes_moderate: Mapped[int | None] = mapped_column(Integer)
     intensity_minutes_vigorous: Mapped[int | None] = mapped_column(Integer)
+
+    # Overnight respiration (breaths/min) + blood oxygen (%)
+    avg_sleep_respiration: Mapped[float | None] = mapped_column(Float)
+    avg_sleep_spo2: Mapped[float | None] = mapped_column(Float)
 
     # Full fetched payload (json) so the coach can reach data we don't display.
     raw_json: Mapped[str | None] = mapped_column(Text)

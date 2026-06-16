@@ -139,6 +139,9 @@ def fetch_day(client: Garmin, day: date) -> dict[str, Any]:
     max_metrics = _safe(client.get_max_metrics, cdate) or []
     summary = _safe(client.get_user_summary, cdate) or {}
     stress = _safe(client.get_all_day_stress, cdate) or {}
+    respiration = _safe(client.get_respiration_data, cdate) or {}
+    spo2 = _safe(client.get_spo2_data, cdate) or {}
+    fitnessage = _safe(client.get_fitnessage_data, cdate) or {}
 
     raw = {
         "sleep": sleep,
@@ -148,6 +151,9 @@ def fetch_day(client: Garmin, day: date) -> dict[str, Any]:
         "max_metrics": max_metrics,
         "user_summary": summary,
         "stress": stress,
+        "respiration": respiration,
+        "spo2": spo2,
+        "fitnessage": fitnessage,
     }
 
     out: dict[str, Any] = {"day": day}
@@ -181,30 +187,39 @@ def fetch_day(client: Garmin, day: date) -> dict[str, Any]:
     out["training_readiness_level"] = tr.get("level")
     out["training_readiness_feedback"] = tr.get("feedbackShort") or tr.get("feedbackLong")
 
-    # ---- training status + acute load + vo2max
+    # ---- training status + acute/chronic load + ACWR
     out["training_status"] = None
     out["acute_load"] = None
+    out["chronic_load"] = None
+    out["acwr"] = None
+    out["acwr_status"] = None
     latest = (status or {}).get("mostRecentTrainingStatus") or {}
     map_ = latest.get("latestTrainingStatusData") or {}
     if isinstance(map_, dict) and map_:
         first = next(iter(map_.values()), {}) or {}
-        out["training_status"] = _status_word(first.get("trainingStatus")) or _clean_status_phrase(
+        # Garmin's localized feedback phrase ("PRODUCTIVE_2") is the real status;
+        # the numeric code is a fallback when the phrase is missing.
+        out["training_status"] = _clean_status_phrase(
             first.get("trainingStatusFeedbackPhrase")
-        )
-        out["acute_load"] = _num(first.get("acuteTrainingLoad"))
-    load_balance = (status or {}).get("mostRecentTrainingLoadBalance") or {}
-    lb_map = load_balance.get("metricsTrainingLoadBalanceDTOMap") or {}
-    if out["acute_load"] is None and isinstance(lb_map, dict) and lb_map:
-        lb_first = next(iter(lb_map.values()), {}) or {}
-        out["acute_load"] = _num(lb_first.get("acwrPercent") or lb_first.get("dailyAcuteChronicWorkloadRatio"))
+        ) or _status_word(first.get("trainingStatus"))
+        load = first.get("acuteTrainingLoadDTO") or {}
+        out["acute_load"] = _num(load.get("dailyTrainingLoadAcute"))
+        out["chronic_load"] = _num(load.get("dailyTrainingLoadChronic"))
+        out["acwr"] = _num(load.get("dailyAcuteChronicWorkloadRatio"))
+        out["acwr_status"] = load.get("acwrStatus")
 
+    # ---- vo2max (FR255 reports it under training status, not max_metrics)
     out["vo2max"] = None
     out["vo2max_cycling"] = None
-    mm = max_metrics[0] if isinstance(max_metrics, list) and max_metrics else {}
-    generic = (mm or {}).get("generic") or {}
-    cycling = (mm or {}).get("cycling") or {}
-    out["vo2max"] = _num(generic.get("vo2MaxValue"))
+    vo2 = (status or {}).get("mostRecentVO2Max") or {}
+    generic = vo2.get("generic") or {}
+    cycling = vo2.get("cycling") or {}
+    out["vo2max"] = _num(generic.get("vo2MaxValue") or generic.get("vo2MaxPreciseValue"))
     out["vo2max_cycling"] = _num(cycling.get("vo2MaxValue"))
+    # Fallback to max_metrics for watches that populate it.
+    if out["vo2max"] is None:
+        mm = max_metrics[0] if isinstance(max_metrics, list) and max_metrics else {}
+        out["vo2max"] = _num(((mm or {}).get("generic") or {}).get("vo2MaxValue"))
 
     # ---- daily activity / cardio (user summary is the richest aggregate)
     out["resting_hr"] = _int(
@@ -223,6 +238,26 @@ def fetch_day(client: Garmin, day: date) -> dict[str, Any]:
     out["body_battery_drained"] = _int(summary.get("bodyBatteryDrainedValue"))
     out["avg_stress"] = _num(summary.get("averageStressLevel") or stress.get("avgStressLevel"))
     out["max_stress"] = _num(summary.get("maxStressLevel") or stress.get("maxStressLevel"))
+
+    # ---- 7-day resting HR baseline (smoother trend than the single-day value)
+    out["resting_hr_7d_avg"] = _int(summary.get("lastSevenDaysAvgRestingHeartRate"))
+
+    # ---- overnight respiration (breaths/min)
+    out["avg_sleep_respiration"] = _num(
+        respiration.get("avgSleepRespirationValue")
+        or dto.get("averageRespirationValue")
+        or summary.get("avgWakingRespirationValue")
+    )
+
+    # ---- overnight blood oxygen (%)
+    out["avg_sleep_spo2"] = _num(
+        spo2.get("avgSleepSpO2")
+        or spo2.get("averageSpO2")
+        or summary.get("averageSpo2")
+    )
+
+    # ---- fitness age
+    out["fitness_age"] = _num(fitnessage.get("fitnessAge"))
 
     out["raw_json"] = json.dumps(raw, default=str)
     return out

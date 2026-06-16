@@ -25,6 +25,14 @@ _COLUMN_MIGRATIONS = [
     "ALTER TABLE action_items ADD COLUMN IF NOT EXISTS target_value DOUBLE PRECISION",
     "ALTER TABLE action_items ADD COLUMN IF NOT EXISTS auto BOOLEAN DEFAULT FALSE",
     "CREATE INDEX IF NOT EXISTS ix_action_items_week_start ON action_items (week_start)",
+    # garmin_daily already exists in prod, so new columns need explicit ALTERs.
+    "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS chronic_load DOUBLE PRECISION",
+    "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS acwr DOUBLE PRECISION",
+    "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS acwr_status VARCHAR",
+    "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS fitness_age DOUBLE PRECISION",
+    "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS resting_hr_7d_avg INTEGER",
+    "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS avg_sleep_respiration DOUBLE PRECISION",
+    "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS avg_sleep_spo2 DOUBLE PRECISION",
 ]
 
 
