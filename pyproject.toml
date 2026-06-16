@@ -11,6 +11,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.27",
     "fastapi>=0.110",
+    "python-multipart>=0.0.7",
     "uvicorn[standard]>=0.30",
     "itsdangerous>=2.0",
     "apscheduler>=3.10",
