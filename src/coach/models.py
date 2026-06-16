@@ -167,11 +167,27 @@ class CoachProfile(Base):
     )
 
 
+class ChatConversation(Base):
+    """A single chat thread shown in the history drawer. ``id`` doubles as the SDK
+    session id, so each conversation gets its own replayed client and transcript.
+    The title is derived from the first user message.
+    """
+
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    title: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, index=True
+    )
+
+
 class ChatMessage(Base):
     """One persisted chat turn, so conversation context survives a process restart
     (e.g. a Railway redeploy) and can be replayed into a fresh SDK client. The SDK's
     own session transcript lives on the container's ephemeral filesystem and is lost
-    on redeploy, so we keep our own copy here.
+    on redeploy, so we keep our own copy here. ``session_id`` is the conversation id.
     """
 
     __tablename__ = "chat_messages"
@@ -180,6 +196,22 @@ class ChatMessage(Base):
     session_id: Mapped[str] = mapped_column(String, index=True)
     role: Mapped[str] = mapped_column(String)  # 'user' | 'assistant'
     content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
+class CoachMemory(Base):
+    """A durable fact the athlete told the coach to remember (an injury, a
+    preference, a target event). Injected into every coordinator/subagent prompt
+    and into daily/weekly report generation so the coach keeps it in mind.
+    """
+
+    __tablename__ = "coach_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    content: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String, default="chat")  # 'chat' | 'manual'
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )

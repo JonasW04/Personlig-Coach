@@ -19,7 +19,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
-from claude_agent_sdk import AssistantMessage, ClaudeSDKClient, TextBlock
+from claude_agent_sdk import AssistantMessage, ClaudeSDKClient, TextBlock, ToolUseBlock
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
@@ -33,11 +33,19 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
-from coach import focus
+from coach import focus, memory
 from coach.agents.coordinator import build_options
 from coach.config import settings
 from coach.db import SessionLocal, init_db
-from coach.models import ActionItem, ChatMessage, Goal, PushSubscription, Report
+from coach.models import (
+    ActionItem,
+    ChatConversation,
+    ChatMessage,
+    CoachMemory,
+    Goal,
+    PushSubscription,
+    Report,
+)
 from coach.web import stats
 
 log = logging.getLogger("coach.web")
@@ -76,6 +84,36 @@ def _save_message(sid: str, role: str, content: str) -> None:
     with SessionLocal() as s:
         s.add(ChatMessage(session_id=sid, role=role, content=content))
         s.commit()
+
+
+def _touch_conversation(sid: str, first_user_message: str) -> None:
+    """Create the conversation row on first message (titled from that message),
+    or just bump ``updated_at`` so it floats to the top of the history list."""
+    with SessionLocal() as s:
+        row = s.get(ChatConversation, sid)
+        if row is None:
+            title = first_user_message.strip().replace("\n", " ")
+            row = ChatConversation(id=sid, title=(title[:80] or "New chat"))
+            s.add(row)
+        else:
+            row.updated_at = _utcnow()
+        s.commit()
+
+
+# Friendly working-step labels, derived from the tool a (sub)agent reaches for.
+# Mirrors the design's status-step list while reflecting what's really running.
+def _step_label(tool_name: str) -> str | None:
+    if tool_name.startswith("mcp__hevy__"):
+        return "Reading your strength data"
+    if tool_name.startswith("mcp__strava__"):
+        return "Reading your cardio data"
+    if tool_name.startswith("mcp__withings__"):
+        return "Reading your body data"
+    if tool_name.startswith("mcp__memory__"):
+        return "Checking what I remember about you"
+    if tool_name in ("Agent", "Task"):
+        return "Consulting your specialist coaches"
+    return None
 
 
 def _replay_preamble(history: list[tuple[str, str]]) -> str:
@@ -329,21 +367,111 @@ async def chat(req: ChatRequest) -> StreamingResponse:
     async def stream():
         async with sess.lock:
             await asyncio.to_thread(_save_message, req.session_id, "user", req.message)
+            await asyncio.to_thread(_touch_conversation, req.session_id, req.message)
             query = sess.maybe_replay_prefix() + req.message
             await sess.client.query(query)
             parts: list[str] = []
+            seen_steps: set[str] = set()
             async for message in sess.client.receive_response():
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             parts.append(block.text)
                             yield json.dumps({"type": "text", "text": block.text}) + "\n"
+                        elif isinstance(block, ToolUseBlock):
+                            label = _step_label(block.name)
+                            if label and label not in seen_steps:
+                                seen_steps.add(label)
+                                yield json.dumps({"type": "step", "label": label}) + "\n"
             await asyncio.to_thread(
                 _save_message, req.session_id, "assistant", "".join(parts)
             )
             yield json.dumps({"type": "done"}) + "\n"
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+@app.get("/api/chats")
+async def list_chats(limit: int = 50) -> dict:
+    limit = max(1, min(limit, 200))
+    with SessionLocal() as s:
+        rows = s.execute(
+            select(ChatConversation)
+            .order_by(ChatConversation.updated_at.desc())
+            .limit(limit)
+        ).scalars().all()
+        return {
+            "chats": [
+                {
+                    "id": r.id,
+                    "title": r.title or "New chat",
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                }
+                for r in rows
+            ]
+        }
+
+
+@app.get("/api/chats/{sid}/messages")
+async def chat_messages(sid: str) -> dict:
+    with SessionLocal() as s:
+        rows = (
+            s.query(ChatMessage)
+            .filter(ChatMessage.session_id == sid)
+            .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+            .all()
+        )
+        return {
+            "messages": [
+                {
+                    "role": r.role,
+                    "content": r.content,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ]
+        }
+
+
+@app.delete("/api/chats/{sid}")
+async def delete_chat(sid: str) -> dict:
+    with SessionLocal() as s:
+        s.query(ChatMessage).filter(ChatMessage.session_id == sid).delete()
+        row = s.get(ChatConversation, sid)
+        if row is not None:
+            s.delete(row)
+        s.commit()
+    await chat_sessions.close_all()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------------ memory
+class MemoryCreate(BaseModel):
+    content: str
+
+
+@app.get("/api/memories")
+async def get_memories() -> dict:
+    return {"memories": await asyncio.to_thread(memory.list_memories)}
+
+
+@app.post("/api/memories")
+async def add_memory(req: MemoryCreate) -> dict:
+    saved = await asyncio.to_thread(memory.add_memory, req.content, "manual")
+    if saved is None:
+        raise HTTPException(400, "content is required")
+    # New memory must reach live chat clients + future reports immediately.
+    await chat_sessions.close_all()
+    return saved
+
+
+@app.delete("/api/memories/{memory_id}")
+async def remove_memory(memory_id: int) -> dict:
+    ok = await asyncio.to_thread(memory.delete_memory, memory_id)
+    if not ok:
+        raise HTTPException(404, "memory not found")
+    await chat_sessions.close_all()
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------------- stats

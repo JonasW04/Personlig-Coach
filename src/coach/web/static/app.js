@@ -1,7 +1,8 @@
-// ---------- session id (per device) ----------
+// ---------- conversation id (active chat; doubles as SDK session id) ----------
+const newId = () => (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
 let sessionId = localStorage.getItem("coach_session");
 if (!sessionId) {
-  sessionId = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
+  sessionId = newId();
   localStorage.setItem("coach_session", sessionId);
 }
 
@@ -19,9 +20,11 @@ function switchView(view) {
   for (const b of document.querySelectorAll("#tabbar button")) {
     b.classList.toggle("active", b.dataset.view === view);
   }
+  document.body.classList.remove("view-chat", "view-stats", "view-reports");
+  document.body.classList.add(`view-${view}`);
   $("title").textContent = TITLES[view];
   if (view === "stats") loadStats();
-  if (view === "reports") { loadFocus(); loadPlan(); loadReadinessHero(); loadReports(); }
+  if (view === "reports") { loadFocus(); loadMemories(); loadPlan(); loadReadinessHero(); loadReports(); }
   history.replaceState(null, "", "#" + view);
 }
 
@@ -36,27 +39,82 @@ const input = $("input");
 const send = $("send");
 let busy = false;
 
+const QUICK_PROMPTS = ["How's my recovery?", "Plan my week", "Why am I so tired?", "Review last workout"];
+
+function fmtClock(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 function showEmptyState() {
-  if (messages.children.length === 0) {
-    const el = document.createElement("div");
-    el.className = "empty";
-    el.innerHTML = "<strong>Ask your coach</strong>Questions about your training, recovery, or progress — grounded in your synced data.";
-    messages.appendChild(el);
-  }
+  if (messages.children.length) return;
+  const el = document.createElement("div");
+  el.className = "empty";
+  el.innerHTML =
+    `<div class="empty-orb"><i></i><i></i><i></i></div>` +
+    `<div><strong>Ask your coach</strong><div class="empty-sub">Questions about your training, recovery, or progress — grounded in your synced data.</div></div>` +
+    `<div class="empty-chips">${QUICK_PROMPTS.map((p) => `<button type="button" class="chip-prompt">${esc(p)}</button>`).join("")}</div>`;
+  messages.appendChild(el);
+  el.querySelectorAll(".chip-prompt").forEach((chip) =>
+    chip.addEventListener("click", () => {
+      if (busy) return;
+      sendMessage(chip.textContent);
+    })
+  );
 }
 function clearEmptyState() {
   const e = messages.querySelector(".empty");
   if (e) e.remove();
 }
-function addMessage(role, text) {
+
+// One chat turn (user or coach), with a timestamp. Coach bodies render markdown.
+function addTurn(role, text, iso) {
   clearEmptyState();
-  const el = document.createElement("div");
-  el.className = `msg ${role}`;
-  el.textContent = text;
-  messages.appendChild(el);
+  const turn = document.createElement("div");
+  turn.className = `turn ${role}`;
+  const body = document.createElement("div");
+  body.className = "msg";
+  if (role === "coach") body.innerHTML = marked.parse(text || "");
+  else body.textContent = text;
+  const time = document.createElement("div");
+  time.className = "msg-time";
+  time.textContent = fmtClock(iso);
+  turn.append(body, time);
+  messages.appendChild(turn);
   messages.scrollTop = messages.scrollHeight;
-  return el;
+  return body;
 }
+
+// The animated "coach working" card with live status steps.
+function addWorkingCard() {
+  clearEmptyState();
+  const card = document.createElement("div");
+  card.className = "working";
+  card.innerHTML =
+    `<div class="working-title"><div class="working-dot"></div><span>Working through your data</span></div>` +
+    `<div class="working-steps"></div>`;
+  messages.appendChild(card);
+  messages.scrollTop = messages.scrollHeight;
+  const stepsEl = card.querySelector(".working-steps");
+  let active = null;
+  return {
+    card,
+    addStep(label) {
+      if (active) active.className = "wstep done";
+      const row = document.createElement("div");
+      row.className = "wstep active";
+      row.innerHTML = `<div class="wstep-icon"></div><span class="wstep-label">${esc(label)}</span>`;
+      stepsEl.appendChild(row);
+      active = row;
+      messages.scrollTop = messages.scrollHeight;
+    },
+    finish() {
+      stepsEl.querySelectorAll(".wstep.active").forEach((r) => (r.className = "wstep done"));
+      card.remove();
+    },
+  };
+}
+
 function autosize() {
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 140) + "px";
@@ -65,9 +123,10 @@ function autosize() {
 async function sendMessage(text) {
   busy = true;
   send.disabled = true;
-  addMessage("user", text);
-  const coachEl = addMessage("coach", "");
-  coachEl.classList.add("pending");
+  addTurn("user", text);
+  const working = addWorkingCard();
+  let coachBody = null;
+  let raw = "";
   try {
     const resp = await fetch("/api/chat", {
       method: "POST",
@@ -88,19 +147,26 @@ async function sendMessage(text) {
       for (const line of lines) {
         if (!line.trim()) continue;
         const evt = JSON.parse(line);
-        if (evt.type === "text") {
-          coachEl.textContent += evt.text;
+        if (evt.type === "step") {
+          working.addStep(evt.label);
+        } else if (evt.type === "text") {
+          if (!coachBody) { working.finish(); coachBody = addTurn("coach", ""); }
+          raw += evt.text;
+          coachBody.innerHTML = marked.parse(raw);
           messages.scrollTop = messages.scrollHeight;
         }
       }
     }
   } catch (err) {
-    coachEl.textContent += (coachEl.textContent ? "\n\n" : "") + `⚠️ ${err.message}`;
+    if (!coachBody) { working.finish(); coachBody = addTurn("coach", ""); }
+    raw += (raw ? "\n\n" : "") + `⚠️ ${err.message}`;
+    coachBody.innerHTML = marked.parse(raw);
   } finally {
-    coachEl.classList.remove("pending");
+    working.finish();
     busy = false;
     send.disabled = false;
     input.focus();
+    loadChatList();
   }
 }
 
@@ -116,6 +182,123 @@ input.addEventListener("input", autosize);
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
 });
+
+// ---------- chat history drawer + multi-chat ----------
+const drawer = $("chat-drawer");
+const drawerScrim = $("drawer-scrim");
+const chatHistory = $("chat-history");
+
+function relTime(iso) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d ago`;
+  const wks = Math.round(days / 7);
+  return `${wks}w ago`;
+}
+
+function openDrawer() {
+  loadChatList();
+  drawerScrim.hidden = false;
+  requestAnimationFrame(() => { drawerScrim.classList.add("open"); drawer.classList.add("open"); });
+  drawer.setAttribute("aria-hidden", "false");
+}
+function closeDrawer() {
+  drawerScrim.classList.remove("open");
+  drawer.classList.remove("open");
+  drawer.setAttribute("aria-hidden", "true");
+  setTimeout(() => { drawerScrim.hidden = true; }, 240);
+}
+
+async function loadChatList() {
+  if (!chatHistory) return;
+  try {
+    const resp = await fetch("/api/chats?limit=50");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderChatList(data.chats || []);
+  } catch (_) { /* ignore */ }
+}
+
+function renderChatList(chats) {
+  if (!chats.length) {
+    chatHistory.innerHTML = `<div class="chat-hist-empty">No chats yet.</div>`;
+    return;
+  }
+  chatHistory.innerHTML = "";
+  chats.forEach((c) => {
+    const item = document.createElement("div");
+    item.className = "chat-hist-item" + (c.id === sessionId ? " active" : "");
+    item.innerHTML =
+      `<div class="chat-hist-main">` +
+      `<div class="chat-hist-title">${esc(c.title || "New chat")}</div>` +
+      `<div class="chat-hist-time">${esc(relTime(c.updated_at))}</div>` +
+      `</div>` +
+      `<button type="button" class="chat-hist-del" aria-label="Delete chat">×</button>`;
+    item.querySelector(".chat-hist-main").addEventListener("click", () => openChat(c.id));
+    item.querySelector(".chat-hist-del").addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteChat(c.id);
+    });
+    chatHistory.appendChild(item);
+  });
+}
+
+async function openChat(id) {
+  if (id !== sessionId) {
+    sessionId = id;
+    localStorage.setItem("coach_session", sessionId);
+    await loadChatMessages(id);
+  }
+  closeDrawer();
+}
+
+async function loadChatMessages(id) {
+  messages.innerHTML = "";
+  try {
+    const resp = await fetch(`/api/chats/${id}/messages`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const msgs = data.messages || [];
+    if (!msgs.length) { showEmptyState(); return; }
+    for (const m of msgs) {
+      addTurn(m.role === "user" ? "user" : "coach", m.content, m.created_at);
+    }
+  } catch (_) {
+    showEmptyState();
+  }
+}
+
+function startNewChat() {
+  sessionId = newId();
+  localStorage.setItem("coach_session", sessionId);
+  messages.innerHTML = "";
+  showEmptyState();
+  closeDrawer();
+  switchView("chat");
+  input.focus();
+}
+
+async function deleteChat(id) {
+  try {
+    const resp = await fetch(`/api/chats/${id}`, { method: "DELETE" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  } catch (_) { /* ignore */ }
+  if (id === sessionId) startNewChat();
+  loadChatList();
+}
+
+$("menu-toggle").addEventListener("click", openDrawer);
+$("drawer-close").addEventListener("click", closeDrawer);
+drawerScrim.addEventListener("click", closeDrawer);
+$("new-chat").addEventListener("click", startNewChat);
+$("drawer-new-chat").addEventListener("click", startNewChat);
 
 // ---------- stats (design dashboard, live data) ----------
 const syncButton = $("sync-data");
@@ -758,8 +941,87 @@ pushToggle.addEventListener("click", async () => {
   }
 });
 
+// ---------- coach memory (Reviews tab) ----------
+const memoryList = $("memory-list");
+const memoryForm = $("memory-form");
+const memoryInput = $("memory-input");
+const memoryStatus = $("memory-status");
+
+function setMemoryStatus(text) {
+  if (memoryStatus) memoryStatus.textContent = text || "";
+}
+
+function renderMemories(items) {
+  if (!memoryList) return;
+  if (!items.length) {
+    memoryList.innerHTML = `<div class="memory-empty">Nothing saved yet. Add a fact, or just tell your coach in chat.</div>`;
+    return;
+  }
+  memoryList.innerHTML = "";
+  items.forEach((m) => {
+    const row = document.createElement("div");
+    row.className = "memory-row" + (m.source === "manual" ? " manual" : "");
+    row.innerHTML =
+      `<div class="memory-text">${esc(m.content)}` +
+      `<span class="memory-src">${m.source === "chat" ? "From chat" : "Added by you"} · ${esc(fmtDate(m.created_at))}</span></div>` +
+      `<button type="button" class="memory-del" aria-label="Forget">×</button>`;
+    row.querySelector(".memory-del").addEventListener("click", () => deleteMemory(m.id));
+    memoryList.appendChild(row);
+  });
+}
+
+async function loadMemories() {
+  if (!memoryList) return;
+  try {
+    const resp = await fetch("/api/memories");
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderMemories(data.memories || []);
+  } catch (err) {
+    setMemoryStatus(`Could not load memory: ${err.message}`);
+  }
+}
+
+async function deleteMemory(id) {
+  try {
+    const resp = await fetch(`/api/memories/${id}`, { method: "DELETE" });
+    if (resp.status === 401) { location.href = "/login"; return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    await loadMemories();
+  } catch (err) {
+    setMemoryStatus(`Delete failed: ${err.message}`);
+  }
+}
+
+if (memoryForm) {
+  memoryForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const content = memoryInput.value.trim();
+    if (!content) return;
+    const btn = memoryForm.querySelector("button[type='submit']");
+    btn.disabled = true;
+    setMemoryStatus("");
+    try {
+      const resp = await fetch("/api/memories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (resp.status === 401) { location.href = "/login"; return; }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      memoryInput.value = "";
+      await loadMemories();
+    } catch (err) {
+      setMemoryStatus(`Save failed: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 // ---------- boot ----------
-showEmptyState();
+loadChatMessages(sessionId);
 const initialView = VIEWS.has(location.hash.slice(1)) ? location.hash.slice(1) : "chat";
 switchView(initialView);
 syncData({ silent: true });

@@ -14,13 +14,31 @@
 <body>
   <header>
     <div class="brand">
+      <button id="menu-toggle" class="icon-btn chat-only" type="button" title="Chat history" aria-label="Chat history">
+        <span class="hamburger"><i></i><i></i><i></i></span>
+      </button>
       <img src="icon.svg" alt="" />
       <h1 id="title">Coach</h1>
     </div>
     <div class="header-actions">
+      <button id="new-chat" class="icon-btn chat-only" type="button" title="New chat" aria-label="New chat">+</button>
       <a href="/logout" class="ghost" title="Sign out" aria-label="Sign out">⏻</a>
     </div>
   </header>
+
+  <!-- Chat history drawer -->
+  <div id="drawer-scrim" class="drawer-scrim" hidden></div>
+  <aside id="chat-drawer" class="chat-drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="drawer-title">Chats</div>
+      <button id="drawer-close" class="icon-btn" type="button" aria-label="Close">✕</button>
+    </div>
+    <button id="drawer-new-chat" class="drawer-new" type="button">
+      <span class="drawer-new-plus">+</span> New chat
+    </button>
+    <div class="drawer-section-label">Recent</div>
+    <div id="chat-history" class="chat-history"></div>
+  </aside>
 
   <!-- Chat -->
   <section id="view-chat" class="view">
@@ -89,6 +107,23 @@
         </div>
       </form>
       <div id="focus-status" class="status-line" aria-live="polite"></div>
+    </div>
+
+    <!-- Coach memory -->
+    <div class="memory-card">
+      <div class="memory-head">
+        <div>
+          <p class="stats-kicker">Memory</p>
+          <h2>What your coach remembers</h2>
+        </div>
+      </div>
+      <p class="memory-hint">Durable facts the coach keeps in mind across chats and every daily &amp; weekly review — injuries, preferences, target events. You can also just tell the coach in chat.</p>
+      <div id="memory-list" class="memory-list"></div>
+      <form id="memory-form" class="memory-form">
+        <input id="memory-input" type="text" placeholder="e.g. Left knee flares up on heavy squats" autocomplete="off" />
+        <button class="primary" type="submit">Remember</button>
+      </form>
+      <div id="memory-status" class="status-line" aria-live="polite"></div>
     </div>
 
     <!-- Today's readiness verdict -->
