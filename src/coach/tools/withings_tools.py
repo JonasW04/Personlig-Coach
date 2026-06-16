@@ -1,18 +1,13 @@
-"""Body-composition read tools over the local DB (Withings), exposed as an MCP server."""
+"""Body-composition read tools over the local DB (Withings)."""
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 
-from claude_agent_sdk import create_sdk_mcp_server, tool
 from sqlalchemy import select
 
 from coach.db import SessionLocal
 from coach.models import BodyMeasurement
-
-
-def _text(payload) -> dict:
-    return {"content": [{"type": "text", "text": json.dumps(payload, default=str)}]}
+from coach.tools.specs import ToolSpec, object_schema
 
 
 def _weekly(rows, fields: list[str]) -> list[dict]:
@@ -55,27 +50,16 @@ def _row(m: BodyMeasurement) -> dict:
     }
 
 
-@tool(
-    "latest_body_metrics",
-    "Most recent weigh-in: weight and full body composition (fat %, fat/muscle/bone mass).",
-    {},
-)
 async def latest_body_metrics(args) -> dict:
     with SessionLocal() as s:
         m = s.execute(
             select(BodyMeasurement).order_by(BodyMeasurement.measured_at.desc()).limit(1)
         ).scalars().first()
     if m is None:
-        return _text({"error": "No body measurements yet. Run a sync after authorizing Withings."})
-    return _text(_row(m))
+        return {"error": "No body measurements yet. Run a sync after authorizing Withings."}
+    return _row(m)
 
 
-@tool(
-    "weight_trend",
-    "Weekly-averaged weight (and fat %, as fat_ratio) over the last N days, oldest first, for "
-    "trend analysis. Weigh-ins are averaged per ISO week to smooth daily noise.",
-    {"days": int},
-)
 async def weight_trend(args) -> dict:
     days = min(int(args.get("days") or 90), 730)
     since = datetime.utcnow() - timedelta(days=days)
@@ -85,16 +69,9 @@ async def weight_trend(args) -> dict:
             .where(BodyMeasurement.measured_at >= since)
             .order_by(BodyMeasurement.measured_at.asc())
         ).scalars().all()
-    return _text(_weekly(rows, ["weight_kg", "fat_ratio"]))
+    return _weekly(rows, ["weight_kg", "fat_ratio"])
 
 
-@tool(
-    "body_comp_trend",
-    "Weekly-averaged body composition over the last N days (weight_kg, fat_ratio %, fat_mass_kg, "
-    "muscle_mass_kg, bone_mass_kg), oldest first. Use to track lean-mass and fat changes during a "
-    "bulk or cut.",
-    {"days": int},
-)
 async def body_comp_trend(args) -> dict:
     days = min(int(args.get("days") or 90), 730)
     since = datetime.utcnow() - timedelta(days=days)
@@ -104,19 +81,42 @@ async def body_comp_trend(args) -> dict:
             .where(BodyMeasurement.measured_at >= since)
             .order_by(BodyMeasurement.measured_at.asc())
         ).scalars().all()
-    return _text(
-        _weekly(rows, ["weight_kg", "fat_ratio", "fat_mass_kg", "muscle_mass_kg", "bone_mass_kg"])
-    )
+    return _weekly(rows, ["weight_kg", "fat_ratio", "fat_mass_kg", "muscle_mass_kg", "bone_mass_kg"])
 
 
-withings_server = create_sdk_mcp_server(
-    name="withings",
-    version="0.1.0",
-    tools=[latest_body_metrics, weight_trend, body_comp_trend],
-)
-
-WITHINGS_TOOL_NAMES = [
-    "mcp__withings__latest_body_metrics",
-    "mcp__withings__weight_trend",
-    "mcp__withings__body_comp_trend",
+WITHINGS_TOOLS = [
+    ToolSpec(
+        name="latest_body_metrics",
+        description="Most recent weigh-in: weight and full body composition (fat %, fat/muscle/bone mass).",
+        parameters=object_schema(),
+        handler=latest_body_metrics,
+        step_label="Reading your body data",
+    ),
+    ToolSpec(
+        name="weight_trend",
+        description=(
+            "Weekly-averaged weight and fat ratio over the last N days, oldest "
+            "first. Weigh-ins are averaged per ISO week to smooth daily noise."
+        ),
+        parameters=object_schema(
+            {"days": {"type": "integer", "minimum": 1, "maximum": 730}},
+        ),
+        handler=weight_trend,
+        step_label="Reading your body data",
+    ),
+    ToolSpec(
+        name="body_comp_trend",
+        description=(
+            "Weekly-averaged body composition over the last N days (weight_kg, "
+            "fat_ratio %, fat_mass_kg, muscle_mass_kg, bone_mass_kg), oldest first. "
+            "Use to track lean-mass and fat changes during a bulk or cut."
+        ),
+        parameters=object_schema(
+            {"days": {"type": "integer", "minimum": 1, "maximum": 730}},
+        ),
+        handler=body_comp_trend,
+        step_label="Reading your body data",
+    ),
 ]
+
+WITHINGS_TOOL_NAMES = [tool.name for tool in WITHINGS_TOOLS]

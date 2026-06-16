@@ -19,7 +19,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
-from claude_agent_sdk import AssistantMessage, ClaudeSDKClient, TextBlock, ToolUseBlock
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
@@ -34,7 +33,7 @@ from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
 from coach import focus, memory
-from coach.agents.coordinator import build_options
+from coach.agents.gemini import GeminiCoachSession, StepEvent, TextEvent
 from coach.config import settings
 from coach.db import SessionLocal, init_db
 from coach.models import (
@@ -60,10 +59,8 @@ def _week_start(d: date | None = None) -> date:
 
 
 # --------------------------------------------------------------------------- chat
-# How many past turns to replay into a freshly built client, and the char budget
-# for that replayed transcript, so rehydration can't blow up the prompt.
+# How many past turns to replay into a freshly built client.
 _REPLAY_TURNS = 20
-_REPLAY_CHARS = 8000
 
 
 def _load_history(sid: str, limit: int = _REPLAY_TURNS) -> list[tuple[str, str]]:
@@ -100,65 +97,17 @@ def _touch_conversation(sid: str, first_user_message: str) -> None:
         s.commit()
 
 
-# Friendly working-step labels, derived from the tool a (sub)agent reaches for.
-# Mirrors the design's status-step list while reflecting what's really running.
-def _step_label(tool_name: str) -> str | None:
-    if tool_name.startswith("mcp__hevy__"):
-        return "Reading your strength data"
-    if tool_name.startswith("mcp__strava__"):
-        return "Reading your cardio data"
-    if tool_name.startswith("mcp__withings__"):
-        return "Reading your body data"
-    if tool_name.startswith("mcp__memory__"):
-        return "Checking what I remember about you"
-    if tool_name in ("Agent", "Task"):
-        return "Consulting your specialist coaches"
-    return None
-
-
-def _replay_preamble(history: list[tuple[str, str]]) -> str:
-    """Render prior turns as a compact transcript to prepend to the next message,
-    so a rebuilt client (new process, or after a focus change) keeps context."""
-    lines, total = [], 0
-    for role, content in reversed(history):  # newest first, trim oldest out
-        label = "Me" if role == "user" else "Coach"
-        line = f"{label}: {content}"
-        if total + len(line) > _REPLAY_CHARS:
-            break
-        lines.append(line)
-        total += len(line)
-    lines.reverse()
-    body = "\n".join(lines)
-    return (
-        "[Earlier conversation, for context — continue it naturally, do not re-greet.]\n\n"
-        f"{body}\n\n[End of earlier conversation. My next message:]\n\n"
-    )
-
-
 class _Session:
-    """One persistent SDK client per browser session, so the coordinator retains
-    conversation context. The lock serializes queries on a single client."""
+    """One persistent Gemini session per browser session, so the coordinator retains
+    conversation context. The lock serializes queries on a single session."""
 
     def __init__(self, sid: str) -> None:
         self.sid = sid
-        self.client = ClaudeSDKClient(options=build_options())
+        self.client = GeminiCoachSession(history=_load_history(sid))
         self.lock = asyncio.Lock()
-        self._connected = False
-        self._replayed = False
 
     async def connect(self) -> None:
-        if not self._connected:
-            await self.client.connect()
-            self._connected = True
-
-    def maybe_replay_prefix(self) -> str:
-        """Return a transcript prefix to seed the first message after a (re)build,
-        then never again for the life of this client."""
-        if self._replayed:
-            return ""
-        self._replayed = True
-        history = _load_history(self.sid)
-        return _replay_preamble(history) if history else ""
+        return None
 
 
 class SessionManager:
@@ -178,8 +127,7 @@ class SessionManager:
     async def close_all(self) -> None:
         async with self._guard:
             for sess in self._sessions.values():
-                if sess._connected:
-                    await sess.client.disconnect()
+                await sess.client.close()
             self._sessions.clear()
 
 
@@ -368,21 +316,15 @@ async def chat(req: ChatRequest) -> StreamingResponse:
         async with sess.lock:
             await asyncio.to_thread(_save_message, req.session_id, "user", req.message)
             await asyncio.to_thread(_touch_conversation, req.session_id, req.message)
-            query = sess.maybe_replay_prefix() + req.message
-            await sess.client.query(query)
             parts: list[str] = []
             seen_steps: set[str] = set()
-            async for message in sess.client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            parts.append(block.text)
-                            yield json.dumps({"type": "text", "text": block.text}) + "\n"
-                        elif isinstance(block, ToolUseBlock):
-                            label = _step_label(block.name)
-                            if label and label not in seen_steps:
-                                seen_steps.add(label)
-                                yield json.dumps({"type": "step", "label": label}) + "\n"
+            async for event in sess.client.events(req.message):
+                if isinstance(event, TextEvent):
+                    parts.append(event.text)
+                    yield json.dumps({"type": "text", "text": event.text}) + "\n"
+                elif isinstance(event, StepEvent) and event.label not in seen_steps:
+                    seen_steps.add(event.label)
+                    yield json.dumps({"type": "step", "label": event.label}) + "\n"
             await asyncio.to_thread(
                 _save_message, req.session_id, "assistant", "".join(parts)
             )

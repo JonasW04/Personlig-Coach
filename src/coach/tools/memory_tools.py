@@ -1,4 +1,4 @@
-"""Memory write/read tools, exposed as an in-process MCP server.
+"""Memory write/read tools exposed to the coach runtime.
 
 The coordinator gets these so it can persist things the athlete asks it to remember
 ("remember that my left knee flares up on heavy squats") and recall them on demand.
@@ -7,47 +7,44 @@ without having to call `list_memories` each turn.
 """
 from __future__ import annotations
 
-import json
-
-from claude_agent_sdk import create_sdk_mcp_server, tool
-
 from coach import memory
+from coach.tools.specs import ToolSpec, object_schema
 
 
-def _text(payload) -> dict:
-    return {"content": [{"type": "text", "text": json.dumps(payload, default=str)}]}
-
-
-@tool(
-    "remember",
-    "Save a durable fact about the athlete to long-term memory (an injury, a dietary "
-    "preference, a target event/date, equipment limits, a standing constraint). Use this "
-    "whenever they tell you something worth keeping in mind for future coaching.",
-    {"note": str},
-)
 async def remember(args) -> dict:
     saved = memory.add_memory((args.get("note") or "").strip(), source="chat")
     if saved is None:
-        return _text({"error": "Nothing to remember — note was empty."})
-    return _text({"saved": True, "memory": saved})
+        return {"error": "Nothing to remember — note was empty."}
+    return {"saved": True, "memory": saved}
 
 
-@tool(
-    "list_memories",
-    "List everything currently saved about the athlete in long-term memory.",
-    {},
-)
 async def list_memories(args) -> dict:
-    return _text(memory.list_memories())
+    return memory.list_memories()
 
 
-memory_server = create_sdk_mcp_server(
-    name="memory",
-    version="0.1.0",
-    tools=[remember, list_memories],
-)
-
-MEMORY_TOOL_NAMES = [
-    "mcp__memory__remember",
-    "mcp__memory__list_memories",
+MEMORY_TOOLS = [
+    ToolSpec(
+        name="remember",
+        description=(
+            "Save a durable fact about the athlete to long-term memory (an injury, "
+            "a dietary preference, a target event/date, equipment limits, a standing "
+            "constraint). Use this whenever they tell you something worth keeping in "
+            "mind for future coaching."
+        ),
+        parameters=object_schema(
+            {"note": {"type": "string"}},
+            required=["note"],
+        ),
+        handler=remember,
+        step_label="Updating what I remember about you",
+    ),
+    ToolSpec(
+        name="list_memories",
+        description="List everything currently saved about the athlete in long-term memory.",
+        parameters=object_schema(),
+        handler=list_memories,
+        step_label="Checking what I remember about you",
+    ),
 ]
+
+MEMORY_TOOL_NAMES = [tool.name for tool in MEMORY_TOOLS]

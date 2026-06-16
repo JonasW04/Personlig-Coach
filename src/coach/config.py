@@ -1,5 +1,3 @@
-import os
-
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    anthropic_api_key: str = ""
+    gemini_api_key: str = ""
     hevy_api_key: str = ""
 
     # Strava OAuth app credentials (https://www.strava.com/settings/api)
@@ -20,11 +18,12 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://jonaswiger@localhost:5433/coach"
 
-    coach_model: str = "claude-sonnet-4-6"
-    coach_review_model: str = "claude-opus-4-7"
+    coach_model: str = "gemini-3.5-flash"
+    coach_review_model: str = "gemini-3.5-flash"
     # Cheap/fast model for tool-less utility transforms (directive expansion,
-    # action-plan extraction) done via the direct Anthropic API, not the SDK.
-    coach_utility_model: str = "claude-haiku-4-5"
+    # action-plan extraction).
+    coach_utility_model: str = "gemini-3.5-flash"
+    coach_reasoning_effort: str = "low"
 
     # Email notifications (SMTP). For Gmail, use an App Password as smtp_password.
     smtp_host: str = ""
@@ -72,28 +71,4 @@ class Settings(BaseSettings):
             v = "postgresql+psycopg://" + v[len("postgresql://") :]
         return v
 
-
 settings = Settings()
-
-
-def _anthropic_key() -> str:
-    """Resolve the key, preferring .env over an empty OS env var.
-
-    pydantic reads OS env before .env, so a blank ANTHROPIC_API_KEY in the shell
-    (some tooling sets one) shadows the real value in .env. Fall back to reading
-    .env directly in that case.
-    """
-    if settings.anthropic_api_key:
-        return settings.anthropic_api_key
-    from dotenv import dotenv_values
-
-    return dotenv_values(".env").get("ANTHROPIC_API_KEY") or ""
-
-
-# The Claude Agent SDK authenticates via the ANTHROPIC_API_KEY env var (or a
-# Claude Code login). Force-export our key (overriding any empty var) so the SDK
-# uses it instead of falling back to an interactive login.
-_key = _anthropic_key()
-if _key:
-    os.environ["ANTHROPIC_API_KEY"] = _key
-    settings.anthropic_api_key = _key

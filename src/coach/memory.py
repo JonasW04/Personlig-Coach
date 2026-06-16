@@ -1,6 +1,6 @@
 """Coach long-term memory: durable facts the athlete asks the coach to remember.
 
-Memories are injected into the coordinator + subagent system prompts (see
+Memories are injected into the coordinator system prompt (see
 coach.agents.coordinator) so every chat reply, daily readiness brief and weekly
 review keeps them in mind. The athlete can add them conversationally (the coach
 calls the `remember` tool) or manually via the web UI.

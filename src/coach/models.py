@@ -154,7 +154,7 @@ class CoachProfile(Base):
 
     ``focus_raw`` is what the user typed in plain language; ``directive`` is the
     model-ready coaching instruction generated from it, injected into the
-    coordinator + subagent prompts so every report reflects the current goal.
+    coordinator prompt so every report reflects the current goal.
     """
 
     __tablename__ = "coach_profile"
@@ -168,7 +168,7 @@ class CoachProfile(Base):
 
 
 class ChatConversation(Base):
-    """A single chat thread shown in the history drawer. ``id`` doubles as the SDK
+    """A single chat thread shown in the history drawer. ``id`` doubles as the
     session id, so each conversation gets its own replayed client and transcript.
     The title is derived from the first user message.
     """
@@ -185,9 +185,8 @@ class ChatConversation(Base):
 
 class ChatMessage(Base):
     """One persisted chat turn, so conversation context survives a process restart
-    (e.g. a Railway redeploy) and can be replayed into a fresh SDK client. The SDK's
-    own session transcript lives on the container's ephemeral filesystem and is lost
-    on redeploy, so we keep our own copy here. ``session_id`` is the conversation id.
+    (e.g. a Railway redeploy) and can be replayed into a fresh model session.
+    ``session_id`` is the conversation id.
     """
 
     __tablename__ = "chat_messages"
@@ -203,7 +202,7 @@ class ChatMessage(Base):
 
 class CoachMemory(Base):
     """A durable fact the athlete told the coach to remember (an injury, a
-    preference, a target event). Injected into every coordinator/subagent prompt
+    preference, a target event). Injected into the coordinator prompt
     and into daily/weekly report generation so the coach keeps it in mind.
     """
 

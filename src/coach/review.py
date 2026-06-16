@@ -1,6 +1,6 @@
 """Automated weekly review. Run via `coach-review`.
 
-Runs the coordinator on the Opus review model to produce a full training review across
+Runs the coordinator on the review model to produce a full training review across
 strength, cardio and body composition. Persisted to the DB and sent to notify channels.
 Schedule weekly on the VPS after the nightly sync, e.g. Sunday evening:
     0 18 * * 0 cd /opt/coach && .venv/bin/coach-review >> /var/log/coach-review.log 2>&1

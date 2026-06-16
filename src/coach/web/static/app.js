@@ -1,4 +1,4 @@
-// ---------- conversation id (active chat; doubles as SDK session id) ----------
+// ---------- conversation id (active chat; doubles as model session id) ----------
 const newId = () => (crypto.randomUUID && crypto.randomUUID()) || String(Date.now());
 let sessionId = localStorage.getItem("coach_session");
 if (!sessionId) {

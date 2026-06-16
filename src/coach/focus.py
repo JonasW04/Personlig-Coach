@@ -1,7 +1,7 @@
 """Training focus: the athlete's goal in plain language, plus a model-ready
 coaching directive generated from it.
 
-The directive is injected into the coordinator + subagent prompts (see
+The directive is injected into the coordinator prompt (see
 coach.agents.coordinator) so every chat reply and generated report reflects the
 *current* focus. Changing the focus regenerates the standing reports so they
 immediately represent the new goal.

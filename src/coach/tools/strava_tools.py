@@ -1,18 +1,13 @@
-"""Cardio read tools over the local DB (Strava activities), exposed as an MCP server."""
+"""Cardio read tools over the local DB (Strava activities)."""
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 
-from claude_agent_sdk import create_sdk_mcp_server, tool
 from sqlalchemy import select
 
 from coach.db import SessionLocal
 from coach.models import Activity
-
-
-def _text(payload) -> dict:
-    return {"content": [{"type": "text", "text": json.dumps(payload, default=str)}]}
+from coach.tools.specs import ToolSpec, object_schema
 
 
 def _pace_min_per_km(distance_m, moving_s):
@@ -25,11 +20,6 @@ def _pace_min_per_km(distance_m, moving_s):
     return round(sec_per_km / 60, 2)
 
 
-@tool(
-    "recent_activities",
-    "List recent cardio activities with sport, date, distance (km), duration and avg HR.",
-    {"limit": int},
-)
 async def recent_activities(args) -> dict:
     limit = min(int(args.get("limit") or 10), 30)
     with SessionLocal() as s:
@@ -50,15 +40,9 @@ async def recent_activities(args) -> dict:
             }
             for a in rows
         ]
-    return _text(out)
+    return out
 
 
-@tool(
-    "weekly_cardio_summary",
-    "Per ISO week over the last N weeks: number of sessions, total distance (km), "
-    "total moving time (min), and total relative effort (suffer score).",
-    {"weeks": int},
-)
 async def weekly_cardio_summary(args) -> dict:
     weeks = min(int(args.get("weeks") or 8), 104)
     since = datetime.utcnow() - timedelta(weeks=weeks)
@@ -80,16 +64,31 @@ async def weekly_cardio_summary(args) -> dict:
         b["distance_km"] += round((a.distance_m or 0) / 1000, 2)
         b["minutes"] += round((a.moving_time_s or 0) / 60, 1)
         b["relative_effort"] += a.suffer_score or 0
-    return _text(sorted(agg.values(), key=lambda r: r["week"]))
+    return sorted(agg.values(), key=lambda r: r["week"])
 
 
-strava_server = create_sdk_mcp_server(
-    name="strava",
-    version="0.1.0",
-    tools=[recent_activities, weekly_cardio_summary],
-)
-
-STRAVA_TOOL_NAMES = [
-    "mcp__strava__recent_activities",
-    "mcp__strava__weekly_cardio_summary",
+STRAVA_TOOLS = [
+    ToolSpec(
+        name="recent_activities",
+        description="List recent cardio activities with sport, date, distance (km), duration and avg HR.",
+        parameters=object_schema(
+            {"limit": {"type": "integer", "minimum": 1, "maximum": 30}},
+        ),
+        handler=recent_activities,
+        step_label="Reading your cardio data",
+    ),
+    ToolSpec(
+        name="weekly_cardio_summary",
+        description=(
+            "Per ISO week over the last N weeks: number of sessions, total distance "
+            "(km), total moving time (min), and total relative effort (suffer score)."
+        ),
+        parameters=object_schema(
+            {"weeks": {"type": "integer", "minimum": 1, "maximum": 104}},
+        ),
+        handler=weekly_cardio_summary,
+        step_label="Reading your cardio data",
+    ),
 ]
+
+STRAVA_TOOL_NAMES = [tool.name for tool in STRAVA_TOOLS]

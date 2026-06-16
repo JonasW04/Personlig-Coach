@@ -1,6 +1,6 @@
 """Daily readiness check. Run via `coach-readiness`.
 
-A light morning brief (Sonnet) on the last few days of training and body data: whether
+A light morning brief on the last few days of training and body data: whether
 to train today and what to prioritize. Persisted to the DB and sent to notify channels.
 Schedule daily on the VPS after the nightly sync, e.g. 06:00:
     0 6 * * * cd /opt/coach && .venv/bin/coach-readiness >> /var/log/coach-readiness.log 2>&1
