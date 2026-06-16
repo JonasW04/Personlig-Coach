@@ -946,12 +946,22 @@ const memoryList = $("memory-list");
 const memoryForm = $("memory-form");
 const memoryInput = $("memory-input");
 const memoryStatus = $("memory-status");
+const memoryCount = $("memory-count");
+const memoryToggle = $("memory-toggle");
+let memoryItems = [];
+let memoryExpanded = false;
 
 function setMemoryStatus(text) {
   if (memoryStatus) memoryStatus.textContent = text || "";
 }
 
-function renderMemories(items) {
+function memoryCountText(count) {
+  if (count === 0) return "Nothing saved";
+  if (count === 1) return "1 saved fact";
+  return `${count} saved facts`;
+}
+
+function renderMemoryRows(items) {
   if (!memoryList) return;
   if (!items.length) {
     memoryList.innerHTML = `<div class="memory-empty">Nothing saved yet. Add a fact, or just tell your coach in chat.</div>`;
@@ -968,6 +978,26 @@ function renderMemories(items) {
     row.querySelector(".memory-del").addEventListener("click", () => deleteMemory(m.id));
     memoryList.appendChild(row);
   });
+}
+
+function renderMemories(items) {
+  if (!memoryList) return;
+  memoryItems = items;
+  const count = memoryItems.length;
+  if (count === 0) memoryExpanded = false;
+  if (memoryCount) memoryCount.textContent = memoryCountText(count);
+  if (memoryToggle) {
+    memoryToggle.hidden = count === 0;
+    memoryToggle.textContent = memoryExpanded ? "Hide" : "Show";
+    memoryToggle.setAttribute("aria-expanded", String(memoryExpanded));
+  }
+  if (!memoryExpanded || count === 0) {
+    memoryList.hidden = true;
+    memoryList.innerHTML = "";
+    return;
+  }
+  memoryList.hidden = false;
+  renderMemoryRows(memoryItems);
 }
 
 async function loadMemories() {
@@ -1011,12 +1041,20 @@ if (memoryForm) {
       if (resp.status === 401) { location.href = "/login"; return; }
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       memoryInput.value = "";
+      setMemoryStatus("Saved.");
       await loadMemories();
     } catch (err) {
       setMemoryStatus(`Save failed: ${err.message}`);
     } finally {
       btn.disabled = false;
     }
+  });
+}
+
+if (memoryToggle) {
+  memoryToggle.addEventListener("click", () => {
+    memoryExpanded = !memoryExpanded;
+    renderMemories(memoryItems);
   });
 }
 

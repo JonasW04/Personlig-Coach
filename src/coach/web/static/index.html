@@ -116,9 +116,13 @@
           <p class="stats-kicker">Memory</p>
           <h2>What your coach remembers</h2>
         </div>
+        <div class="memory-actions">
+          <span id="memory-count" class="memory-count">Loading…</span>
+          <button id="memory-toggle" class="secondary" type="button" aria-controls="memory-list" aria-expanded="false" hidden>Show</button>
+        </div>
       </div>
       <p class="memory-hint">Durable facts the coach keeps in mind across chats and every daily &amp; weekly review — injuries, preferences, target events. You can also just tell the coach in chat.</p>
-      <div id="memory-list" class="memory-list"></div>
+      <div id="memory-list" class="memory-list" hidden></div>
       <form id="memory-form" class="memory-form">
         <input id="memory-input" type="text" placeholder="e.g. Left knee flares up on heavy squats" autocomplete="off" />
         <button class="primary" type="submit">Remember</button>
