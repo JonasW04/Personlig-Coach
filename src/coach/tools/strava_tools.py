@@ -31,7 +31,7 @@ def _pace_min_per_km(distance_m, moving_s):
     {"limit": int},
 )
 async def recent_activities(args) -> dict:
-    limit = int(args.get("limit") or 10)
+    limit = min(int(args.get("limit") or 10), 30)
     with SessionLocal() as s:
         rows = s.execute(
             select(Activity).order_by(Activity.start_time.desc()).limit(limit)
@@ -60,7 +60,7 @@ async def recent_activities(args) -> dict:
     {"weeks": int},
 )
 async def weekly_cardio_summary(args) -> dict:
-    weeks = int(args.get("weeks") or 8)
+    weeks = min(int(args.get("weeks") or 8), 104)
     since = datetime.utcnow() - timedelta(weeks=weeks)
     with SessionLocal() as s:
         rows = s.execute(

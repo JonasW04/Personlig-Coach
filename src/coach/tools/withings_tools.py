@@ -15,6 +15,33 @@ def _text(payload) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(payload, default=str)}]}
 
 
+def _weekly(rows, fields: list[str]) -> list[dict]:
+    """Bin weigh-ins by ISO week and average each field, oldest first.
+
+    Weigh-ins are noisy and can be daily, so a weekly mean is both better signal
+    and a hard bound on how much lands in the model's context.
+    """
+    buckets: dict = {}
+    for m in rows:
+        if m.measured_at is None:
+            continue
+        iso = m.measured_at.isocalendar()
+        key = f"{iso.year}-W{iso.week:02d}"
+        b = buckets.setdefault(key, {f: [] for f in fields})
+        for f in fields:
+            v = getattr(m, f)
+            if v is not None:
+                b[f].append(v)
+    out = []
+    for key in sorted(buckets):
+        agg: dict = {"week": key}
+        for f in fields:
+            vals = buckets[key][f]
+            agg[f] = round(sum(vals) / len(vals), 2) if vals else None
+        out.append(agg)
+    return out
+
+
 def _row(m: BodyMeasurement) -> dict:
     return {
         "date": m.measured_at,
@@ -45,11 +72,12 @@ async def latest_body_metrics(args) -> dict:
 
 @tool(
     "weight_trend",
-    "Weight (and fat %) for each weigh-in over the last N days, oldest first, for trend analysis.",
+    "Weekly-averaged weight (and fat %, as fat_ratio) over the last N days, oldest first, for "
+    "trend analysis. Weigh-ins are averaged per ISO week to smooth daily noise.",
     {"days": int},
 )
 async def weight_trend(args) -> dict:
-    days = int(args.get("days") or 90)
+    days = min(int(args.get("days") or 90), 730)
     since = datetime.utcnow() - timedelta(days=days)
     with SessionLocal() as s:
         rows = s.execute(
@@ -57,25 +85,18 @@ async def weight_trend(args) -> dict:
             .where(BodyMeasurement.measured_at >= since)
             .order_by(BodyMeasurement.measured_at.asc())
         ).scalars().all()
-    out = [
-        {
-            "date": m.measured_at,
-            "weight_kg": round(m.weight_kg, 2) if m.weight_kg is not None else None,
-            "fat_ratio_pct": round(m.fat_ratio, 2) if m.fat_ratio is not None else None,
-        }
-        for m in rows
-    ]
-    return _text(out)
+    return _text(_weekly(rows, ["weight_kg", "fat_ratio"]))
 
 
 @tool(
     "body_comp_trend",
-    "Full body-composition history over the last N days (weight, fat %, fat/muscle/bone mass), "
-    "oldest first. Use to track lean-mass and fat changes during a bulk or cut.",
+    "Weekly-averaged body composition over the last N days (weight_kg, fat_ratio %, fat_mass_kg, "
+    "muscle_mass_kg, bone_mass_kg), oldest first. Use to track lean-mass and fat changes during a "
+    "bulk or cut.",
     {"days": int},
 )
 async def body_comp_trend(args) -> dict:
-    days = int(args.get("days") or 90)
+    days = min(int(args.get("days") or 90), 730)
     since = datetime.utcnow() - timedelta(days=days)
     with SessionLocal() as s:
         rows = s.execute(
@@ -83,7 +104,9 @@ async def body_comp_trend(args) -> dict:
             .where(BodyMeasurement.measured_at >= since)
             .order_by(BodyMeasurement.measured_at.asc())
         ).scalars().all()
-    return _text([_row(m) for m in rows])
+    return _text(
+        _weekly(rows, ["weight_kg", "fat_ratio", "fat_mass_kg", "muscle_mass_kg", "bone_mass_kg"])
+    )
 
 
 withings_server = create_sdk_mcp_server(

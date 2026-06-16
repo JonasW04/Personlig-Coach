@@ -8,9 +8,7 @@ immediately represent the new goal.
 """
 from __future__ import annotations
 
-from claude_agent_sdk import AssistantMessage, ClaudeSDKClient, TextBlock, ClaudeAgentOptions
-
-from coach.config import settings
+from coach import llm
 from coach.db import SessionLocal
 from coach.models import CoachProfile
 
@@ -66,18 +64,10 @@ def current_directive() -> str:
 
 
 async def generate_directive(raw: str) -> str:
-    """Use a lightweight model call (no tools) to expand a plain-text goal into a
+    """Use a lightweight, tool-less model call to expand a plain-text goal into a
     coaching directive."""
-    options = ClaudeAgentOptions(model=settings.coach_model)
-    parts: list[str] = []
-    async with ClaudeSDKClient(options=options) as client:
-        await client.query(_META_PROMPT.format(raw=raw.strip()))
-        async for message in client.receive_response():
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        parts.append(block.text)
-    return "".join(parts).strip() or DEFAULT_DIRECTIVE
+    text = await llm.complete(_META_PROMPT.format(raw=raw.strip()), max_tokens=512)
+    return text or DEFAULT_DIRECTIVE
 
 
 def save_profile(focus_raw: str, directive: str) -> dict:

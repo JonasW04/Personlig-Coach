@@ -37,7 +37,7 @@ from coach import focus
 from coach.agents.coordinator import build_options
 from coach.config import settings
 from coach.db import SessionLocal, init_db
-from coach.models import ActionItem, Goal, PushSubscription, Report
+from coach.models import ActionItem, ChatMessage, Goal, PushSubscription, Report
 from coach.web import stats
 
 log = logging.getLogger("coach.web")
@@ -52,19 +52,75 @@ def _week_start(d: date | None = None) -> date:
 
 
 # --------------------------------------------------------------------------- chat
+# How many past turns to replay into a freshly built client, and the char budget
+# for that replayed transcript, so rehydration can't blow up the prompt.
+_REPLAY_TURNS = 20
+_REPLAY_CHARS = 8000
+
+
+def _load_history(sid: str, limit: int = _REPLAY_TURNS) -> list[tuple[str, str]]:
+    with SessionLocal() as s:
+        rows = (
+            s.query(ChatMessage)
+            .filter(ChatMessage.session_id == sid)
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .limit(limit)
+            .all()
+        )
+    return [(r.role, r.content) for r in reversed(rows)]
+
+
+def _save_message(sid: str, role: str, content: str) -> None:
+    if not content.strip():
+        return
+    with SessionLocal() as s:
+        s.add(ChatMessage(session_id=sid, role=role, content=content))
+        s.commit()
+
+
+def _replay_preamble(history: list[tuple[str, str]]) -> str:
+    """Render prior turns as a compact transcript to prepend to the next message,
+    so a rebuilt client (new process, or after a focus change) keeps context."""
+    lines, total = [], 0
+    for role, content in reversed(history):  # newest first, trim oldest out
+        label = "Me" if role == "user" else "Coach"
+        line = f"{label}: {content}"
+        if total + len(line) > _REPLAY_CHARS:
+            break
+        lines.append(line)
+        total += len(line)
+    lines.reverse()
+    body = "\n".join(lines)
+    return (
+        "[Earlier conversation, for context — continue it naturally, do not re-greet.]\n\n"
+        f"{body}\n\n[End of earlier conversation. My next message:]\n\n"
+    )
+
+
 class _Session:
     """One persistent SDK client per browser session, so the coordinator retains
     conversation context. The lock serializes queries on a single client."""
 
-    def __init__(self) -> None:
+    def __init__(self, sid: str) -> None:
+        self.sid = sid
         self.client = ClaudeSDKClient(options=build_options())
         self.lock = asyncio.Lock()
         self._connected = False
+        self._replayed = False
 
     async def connect(self) -> None:
         if not self._connected:
             await self.client.connect()
             self._connected = True
+
+    def maybe_replay_prefix(self) -> str:
+        """Return a transcript prefix to seed the first message after a (re)build,
+        then never again for the life of this client."""
+        if self._replayed:
+            return ""
+        self._replayed = True
+        history = _load_history(self.sid)
+        return _replay_preamble(history) if history else ""
 
 
 class SessionManager:
@@ -76,16 +132,17 @@ class SessionManager:
         async with self._guard:
             sess = self._sessions.get(sid)
             if sess is None:
-                sess = _Session()
+                sess = _Session(sid)
                 self._sessions[sid] = sess
         await sess.connect()
         return sess
 
     async def close_all(self) -> None:
-        for sess in self._sessions.values():
-            if sess._connected:
-                await sess.client.disconnect()
-        self._sessions.clear()
+        async with self._guard:
+            for sess in self._sessions.values():
+                if sess._connected:
+                    await sess.client.disconnect()
+            self._sessions.clear()
 
 
 chat_sessions = SessionManager()
@@ -271,12 +328,19 @@ async def chat(req: ChatRequest) -> StreamingResponse:
 
     async def stream():
         async with sess.lock:
-            await sess.client.query(req.message)
+            await asyncio.to_thread(_save_message, req.session_id, "user", req.message)
+            query = sess.maybe_replay_prefix() + req.message
+            await sess.client.query(query)
+            parts: list[str] = []
             async for message in sess.client.receive_response():
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
+                            parts.append(block.text)
                             yield json.dumps({"type": "text", "text": block.text}) + "\n"
+            await asyncio.to_thread(
+                _save_message, req.session_id, "assistant", "".join(parts)
+            )
             yield json.dumps({"type": "done"}) + "\n"
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
@@ -598,6 +662,9 @@ async def set_focus(req: FocusUpdate) -> dict:
     if not raw:
         raise HTTPException(400, "focus_raw is required")
     profile = await focus.set_focus(raw)
+    # Drop live chat clients so the next message rebuilds them with the new
+    # directive; prior turns are replayed from the DB, so context is preserved.
+    await chat_sessions.close_all()
     # Regenerate the standing reports in the background so they immediately
     # represent the new focus; the client polls /api/focus for completion.
     asyncio.create_task(_regenerate_reports(("readiness", "weekly")))

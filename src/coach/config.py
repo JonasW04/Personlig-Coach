@@ -22,6 +22,9 @@ class Settings(BaseSettings):
 
     coach_model: str = "claude-sonnet-4-6"
     coach_review_model: str = "claude-opus-4-7"
+    # Cheap/fast model for tool-less utility transforms (directive expansion,
+    # action-plan extraction) done via the direct Anthropic API, not the SDK.
+    coach_utility_model: str = "claude-haiku-4-5"
 
     # Email notifications (SMTP). For Gmail, use an App Password as smtp_password.
     smtp_host: str = ""

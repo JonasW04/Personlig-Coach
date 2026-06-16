@@ -17,12 +17,11 @@ from datetime import date, timedelta
 
 from claude_agent_sdk import (
     AssistantMessage,
-    ClaudeAgentOptions,
     ClaudeSDKClient,
     TextBlock,
 )
 
-from coach import notify
+from coach import llm, notify
 from coach.agents.coordinator import build_options
 from coach.config import settings
 from coach.db import SessionLocal
@@ -115,18 +114,12 @@ def _week_start(d: date | None = None) -> date:
 
 
 async def extract_actions(review: str) -> list[dict]:
-    """Ask a lightweight model to turn the review's action plan into structured items."""
+    """Ask a lightweight, tool-less model to turn the review's action plan into
+    structured items."""
     metrics = "\n".join(f"  - {k}: {desc}" for k, desc in _ACTION_METRICS.items())
-    options = ClaudeAgentOptions(model=settings.coach_model)
-    parts: list[str] = []
-    async with ClaudeSDKClient(options=options) as client:
-        await client.query(_EXTRACT_PROMPT.format(metrics=metrics, review=review))
-        async for message in client.receive_response():
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        parts.append(block.text)
-    raw = "".join(parts).strip()
+    raw = await llm.complete(
+        _EXTRACT_PROMPT.format(metrics=metrics, review=review), max_tokens=1024
+    )
     match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not match:
         return []

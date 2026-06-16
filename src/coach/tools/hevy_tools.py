@@ -25,7 +25,7 @@ def _text(payload) -> dict:
     {"limit": int},
 )
 async def recent_workouts(args) -> dict:
-    limit = int(args.get("limit") or 10)
+    limit = min(int(args.get("limit") or 10), 30)
     with SessionLocal() as s:
         rows = s.execute(
             select(Workout).order_by(Workout.start_time.desc()).limit(limit)
@@ -50,7 +50,7 @@ async def recent_workouts(args) -> dict:
 )
 async def exercise_progression(args) -> dict:
     name = (args.get("exercise") or "").strip()
-    weeks = int(args.get("weeks") or 26)
+    weeks = min(int(args.get("weeks") or 26), 104)
     since = datetime.utcnow() - timedelta(weeks=weeks)
     with SessionLocal() as s:
         rows = s.execute(
@@ -79,7 +79,9 @@ async def exercise_progression(args) -> dict:
                 "reps": reps,
                 "est_1rm": e1rm,
             }
-    return _text(sorted(by_session.values(), key=lambda r: r["date"]))
+    # Keep the most recent 52 sessions so a long history can't flood context.
+    points = sorted(by_session.values(), key=lambda r: r["date"])[-52:]
+    return _text(points)
 
 
 @tool(
@@ -88,7 +90,7 @@ async def exercise_progression(args) -> dict:
     {"weeks": int},
 )
 async def weekly_volume(args) -> dict:
-    weeks = int(args.get("weeks") or 8)
+    weeks = min(int(args.get("weeks") or 8), 104)
     since = datetime.utcnow() - timedelta(weeks=weeks)
     with SessionLocal() as s:
         rows = s.execute(

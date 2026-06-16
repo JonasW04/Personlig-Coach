@@ -167,6 +167,24 @@ class CoachProfile(Base):
     )
 
 
+class ChatMessage(Base):
+    """One persisted chat turn, so conversation context survives a process restart
+    (e.g. a Railway redeploy) and can be replayed into a fresh SDK client. The SDK's
+    own session transcript lives on the container's ephemeral filesystem and is lost
+    on redeploy, so we keep our own copy here.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String, index=True)
+    role: Mapped[str] = mapped_column(String)  # 'user' | 'assistant'
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
 class PushSubscription(Base):
     """Browser Web Push subscription for report notifications."""
 
