@@ -23,22 +23,30 @@ from coach.models import ActionItem, Report
 
 log = logging.getLogger("coach.reports")
 
-READINESS_PROMPT = """Give me today's readiness check. Keep it short — a quick morning brief.
+READINESS_PROMPT = """Give me today's readiness check. This is a training brief — the point is to
+tell me WHAT TO TRAIN TODAY. Keep it short and decisive.
 
 Start with EXACTLY one line in this format, nothing before it:
-Verdict: <Train | Train easy | Rest> — <a few words on why / what to prioritise>
+Verdict: <Train | Train easy | Rest> — <what to train today and why> (e.g. which split /
+muscle groups are freshest, or that it's a cardio/rest day)
 
-Then a few tight bullets covering the last 3-5 days only:
-- Garmin recovery this morning: pull the latest recovery data — HRV (value vs. baseline +
-  status), sleep last night (duration + score), Body Battery, resting HR vs its 7-day avg.
-  Flag anything off (suppressed HRV, poor sleep, elevated resting HR).
-- training load: Garmin training status and the acute:chronic load ratio (ACWR — sweet
-  spot 0.8–1.3; call out if I'm spiking high or detraining low), plus which muscle groups
-  were hit recently (strength) and any hard/long cardio that adds recovery cost
-- the latest body-composition reading if it's relevant to today's call
+Then lead with TRAINING — this is the core of the brief:
+- Walk the last 3-5 days session by session (date + what was hit). For each, judge how
+  recovered that muscle group / system is now (e.g. legs <24h out = skip; a push session
+  5 days ago = fully clear). Call out any hard/long cardio and its residual recovery cost.
+- From that, make the call: which split or muscle groups have the most clearance today,
+  and what to specifically avoid (don't stack onto something <24-48h old). If adding
+  cardio, say how much and how easy.
 
-Recommend what to prioritise and what to go easy on, against my current focus. Note any
-recovery red flags. No long analysis.
+Then a short supporting check (only let this MODIFY the training call, don't make it the
+focus): this morning's Garmin recovery — HRV vs baseline, sleep, resting HR vs 7-day avg,
+Body Battery, and the acute:chronic load ratio (ACWR, sweet spot 0.8–1.3). If recovery is
+fine, say so in one line and move on. If something's off (suppressed HRV, poor sleep,
+rising resting HR, ACWR spike >1.3), use it to dial the verdict down.
+
+Then the latest body-composition reading if it's relevant to today's call.
+
+End with any red flags. No long analysis — be concrete and training-first.
 """
 
 HEALTH_PROMPT = """Give me a recovery & health read from my Garmin data. This drives
