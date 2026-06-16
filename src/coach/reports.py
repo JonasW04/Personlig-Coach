@@ -29,8 +29,12 @@ Start with EXACTLY one line in this format, nothing before it:
 Verdict: <Train | Train easy | Rest> — <a few words on why / what to prioritise>
 
 Then a few tight bullets covering the last 3-5 days only:
-- recent training load and which muscle groups were hit (strength), and any hard/long
-  cardio that adds recovery cost
+- Garmin recovery this morning: pull the latest recovery data — HRV (value vs. baseline +
+  status), sleep last night (duration + score), Body Battery, resting HR vs its 7-day avg.
+  Flag anything off (suppressed HRV, poor sleep, elevated resting HR).
+- training load: Garmin training status and the acute:chronic load ratio (ACWR — sweet
+  spot 0.8–1.3; call out if I'm spiking high or detraining low), plus which muscle groups
+  were hit recently (strength) and any hard/long cardio that adds recovery cost
 - the latest body-composition reading if it's relevant to today's call
 
 Recommend what to prioritise and what to go easy on, against my current focus. Note any
@@ -45,14 +49,17 @@ Verdict: <Recovered | Moderate | Compromised> — <a few words on the main drive
 
 Then tight sections (use the recovery tools — pull a trend, not just today):
 - Recovery now: HRV (value vs. baseline + status), Body Battery, sleep last night
-  (duration, score, deep/REM), resting HR. Include Garmin training-readiness score
-  & level only if present (some watches don't report it — don't dwell on it if absent).
+  (duration, score, deep/REM), resting HR (vs its 7-day average), overnight respiration
+  and SpO2 if notable. Include Garmin training-readiness score & level only if present
+  (some watches don't report it — don't dwell on it if absent).
 - Trend (last 7-14 days): is HRV/sleep/resting-HR improving, stable, or degrading?
   Call out accumulating fatigue or a recovery rebound.
-- Training load: training status and acute load — am I building, maintaining, or
-  overreaching? VO2max trend if it moved.
+- Training load: training status and the acute:chronic workload ratio (ACWR — show acute
+  vs chronic load and the ratio; sweet spot is 0.8–1.3, flag if I'm spiking >1.3 or
+  detraining <0.8). Am I building, maintaining, or overreaching? VO2max and fitness-age
+  trend if either moved.
 - What to do today: how hard to go and what to prioritise, judged against my focus.
-  Flag clear red flags (suppressed HRV, poor sleep streak, rising resting HR).
+  Flag clear red flags (suppressed HRV, poor sleep streak, rising resting HR, ACWR spike).
 
 Be specific with numbers and dates. Keep it scannable.
 """
@@ -60,6 +67,10 @@ Be specific with numbers and dates. Keep it scannable.
 REVIEW_PROMPT = """Produce my weekly training review. Use all relevant data tools and cover:
 - strength (Hevy): volume, key lifts and 1RM trends, stalls, and progression for next week
 - cardio (Strava): aerobic load this week and whether it's interfering with recovery
+- recovery & load (Garmin): pull the recovery trend for the week — HRV (vs baseline),
+  sleep, resting HR, Body Battery, and the training load picture: training status and the
+  acute:chronic workload ratio (ACWR — sweet spot 0.8–1.3). Is load building safely or
+  spiking into overreaching? Note any VO2max / fitness-age movement.
 - body (Withings): weight and body-composition trend, interpreted against my current focus
 
 Cover the last 7 days versus the prior weeks. Be specific with dates and numbers. End with
