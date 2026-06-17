@@ -223,8 +223,67 @@ class ActionItem(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class TrainingBlock(Base):
+    """A periodized training block with one active block at a time."""
+
+    __tablename__ = "training_blocks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String)
+    goal: Mapped[str] = mapped_column(String)
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    body_mode: Mapped[str | None] = mapped_column(String)
+    phases_json: Mapped[str] = mapped_column(Text, default="[]")
+    focus: Mapped[str] = mapped_column(Text)
+    deload: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class RecoveryRule(Base):
+    """A user-defined recovery or scheduling guardrail."""
+
+    __tablename__ = "recovery_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    label: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(Text)
+    condition_json: Mapped[str | None] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(String)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class PlanDay(Base):
+    """One generated session in the athlete's weekly plan."""
+
+    __tablename__ = "plan_days"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    date: Mapped[date] = mapped_column(Date, unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String)  # strength | cardio | rest
+    title: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="planned", index=True)
+    hevy_routine_id: Mapped[str | None] = mapped_column(String)
+    garmin_workout_id: Mapped[str | None] = mapped_column(String)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    block_id: Mapped[int | None] = mapped_column(ForeignKey("training_blocks.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class CoachProfile(Base):
-    """Singleton (id=1) holding the athlete's training focus.
+    """Singleton (id=1) holding the athlete's training focus and body mode.
 
     ``focus_raw`` is what the user typed in plain language; ``directive`` is the
     model-ready coaching instruction generated from it, injected into the
@@ -236,6 +295,9 @@ class CoachProfile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     focus_raw: Mapped[str] = mapped_column(Text)
     directive: Mapped[str] = mapped_column(Text)
+    body_mode: Mapped[str | None] = mapped_column(String)
+    body_mode_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    body_mode_week_count: Mapped[int | None] = mapped_column(Integer)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
@@ -285,6 +347,7 @@ class CoachMemory(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     content: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String, default="chat")  # 'chat' | 'manual'
+    category: Mapped[str] = mapped_column(String, default="note")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )
@@ -303,6 +366,18 @@ class PushSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class NotificationPref(Base):
+    """One UI-owned notification delivery preference."""
+
+    __tablename__ = "notification_prefs"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )

@@ -142,6 +142,12 @@ window.STATE = {
     { key: "weeklyReview", label: "Weekly review", description: "When your weekly review is ready.", enabled: true },
     { key: "quietHours", label: "Quiet hours 21:00–06:00", description: "Hold non-urgent nudges overnight.", enabled: false },
   ],
+  pushNotifications: {
+    available: false,
+    subscribed: false,
+    publicKey: null,
+    hint: "Checking browser push support…",
+  },
 
   nudges: [
     { kind: "coach", title: "Today: Upper Pull, 45–60 min", body: "Ready in Hevy", color: "blue", actions: [] },

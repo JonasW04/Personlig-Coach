@@ -19,22 +19,24 @@ def list_memories() -> list[dict]:
             select(CoachMemory).order_by(CoachMemory.created_at.asc())
         ).scalars().all()
         return [
-            {"id": m.id, "content": m.content, "source": m.source,
+            {"id": m.id, "content": m.content, "source": m.source, "category": m.category,
              "created_at": m.created_at.isoformat() if m.created_at else None}
             for m in rows
         ]
 
 
-def add_memory(content: str, source: str = "chat") -> dict | None:
+def add_memory(content: str, source: str = "chat", category: str = "note") -> dict | None:
     content = (content or "").strip()
     if not content:
         return None
+    category = ((category or "note").strip() or "note")[:50]
     with SessionLocal() as s:
-        row = CoachMemory(content=content[:1000], source=source)
+        row = CoachMemory(content=content[:1000], source=source, category=category)
         s.add(row)
         s.commit()
         s.refresh(row)
         return {"id": row.id, "content": row.content, "source": row.source,
+                "category": row.category,
                 "created_at": row.created_at.isoformat() if row.created_at else None}
 
 

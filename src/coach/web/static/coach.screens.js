@@ -100,9 +100,9 @@ window.SCREENS = (() => {
     const p = STATE.weekPlan;
     const tiles = p.tiles.map((t) => `<div class="tile" style="text-align:center"><div class="big">${esc(t.value)}</div><div class="label-mono" style="margin-top:4px">${esc(t.label)}</div></div>`).join("");
     const statusPill = (d) => {
-      const map = { completed: ["green", true], planned: [d.dot === "amber" ? "amber" : "blue", true], replaced: ["amber", false], rest: ["violet", false] };
+      const map = { completed: ["green", true], ready: ["green", true], planned: [d.dot === "amber" ? "amber" : "blue", true], missed: ["orange", false], replaced: ["amber", false], rest: ["violet", false] };
       const [c, dot] = map[d.statusKind] || ["muted", false];
-      const icon = d.statusKind === "completed" ? "✓ " : d.statusKind === "replaced" ? "↻ " : d.statusKind === "planned" ? "● " : "☾ ";
+      const icon = d.statusKind === "completed" ? "✓ " : d.statusKind === "replaced" ? "↻ " : d.statusKind === "missed" ? "! " : ["planned", "ready"].includes(d.statusKind) ? "● " : "☾ ";
       return pill(c, icon + d.status, false);
     };
     const dayCard = (d) => `
@@ -113,6 +113,7 @@ window.SCREENS = (() => {
           `<div class="muted" style="font-size:11.5px;flex:1">${d.exercises.map((e) => esc(e)).join(" · ")}</div>`}
         ${d.warn ? `<div style="color:var(--easy);font-size:11px">⚠ ${esc(d.warn)}</div>` : ""}
         ${d.delivery ? `<div class="delivery" style="color:var(--${d.deliveryColor === "amber" ? "easy" : d.deliveryColor === "orange" ? "cardio" : "train"})">${esc(d.delivery)}</div>` : ""}
+        ${d.date && d.accent === "cardio" ? `<button class="btn btn-outline plan-garmin" data-action="schedule-garmin" data-date="${esc(d.date)}" data-scheduled="${d.garminWorkoutId ? "true" : "false"}">${d.garminWorkoutId ? "Open Garmin" : "Schedule in Garmin"}</button>` : ""}
         <div style="margin-top:auto">${statusPill(d)}</div>
       </div>`;
 
@@ -131,6 +132,9 @@ window.SCREENS = (() => {
   // ------------------------------------------------------------------- Workout Builder
   function builder() {
     const b = STATE.builder;
+    const ready = b.live ? Boolean(b.hevyRoutineId) : true;
+    const hevyState = ready ? "Ready in Hevy" : "Planned";
+    const hevyButton = ready ? "Open in Hevy" : "Push to Hevy";
     const setRows = (ex) => `
       <table class="settable">
         <thead><tr><th>SET</th><th>WEIGHT</th><th>REPS</th><th>RPE</th></tr></thead>
@@ -150,20 +154,19 @@ window.SCREENS = (() => {
       <div class="card"><p class="label-mono">COACH NOTES</p><div class="sec" style="margin-top:8px;font-size:12.5px;line-height:1.5">${esc(b.notes)}</div></div>
       <div class="card"><p class="label-mono" style="margin-bottom:10px">SESSION TARGETS</p>
         <div class="stack">${b.targets.map((t) => `<div class="between"><span class="muted" style="font-size:12px">${esc(t.label)}</span><span style="font-weight:700">${esc(t.value)}</span></div>`).join("")}</div></div>
-      <div class="note-green"><p class="label-mono" style="color:var(--train)">PROGRESSION ENGINE</p><div style="margin-top:6px;font-size:12.5px">Deadlift cleared last week at RPE 8 — adding +2.5 kg. Rows held to bank recovery for Thursday's legs.</div></div>
       <button class="btn btn-outline btn-block" data-action="swap-exercise">Swap an exercise ${I.arrowRight(15)}</button>
     </div>`;
 
     return `<div class="screen-inner">
       ${crumb(b.crumb)}
       <button class="backchev mobile-only" data-action="back">${I.chevronLeft(20)} Plan</button>
-      ${head("Workout · Ready in Hevy", b.title,
-        `<span class="pill pill-green"><span class="dot"></span>Ready in Hevy · ${esc(b.synced)}</span>
+      ${head(`Workout · ${hevyState}`, b.title,
+        `<span class="pill ${ready ? "pill-green" : "pill-blue"}"><span class="dot"></span>${hevyState} · ${esc(b.synced)}</span>
          <button class="btn-text" data-action="copy-workout">${I.copy(15)} Copy workout</button>
-         <button class="btn btn-primary" data-action="open-hevy">Open in Hevy</button>`, "desktop-only")}
+         <button class="btn btn-primary" data-action="open-hevy">${hevyButton}</button>`, "desktop-only")}
       <div class="row wrap mobile-only" style="margin:-4px 0 14px">
-        <span class="pill pill-green"><span class="dot"></span>Ready in Hevy · ${esc(b.synced)}</span>
-        <button class="btn btn-primary" data-action="open-hevy">Open in Hevy</button>
+        <span class="pill ${ready ? "pill-green" : "pill-blue"}"><span class="dot"></span>${hevyState} · ${esc(b.synced)}</span>
+        <button class="btn btn-primary" data-action="open-hevy">${hevyButton}</button>
         <button class="btn-text" data-action="copy-workout">${I.copy(15)} Copy</button>
         <button class="btn-text" data-action="sync">${I.refresh(15)} Sync latest</button>
         <button class="btn-text" data-action="replan-today">Re-plan</button>
@@ -183,7 +186,7 @@ window.SCREENS = (() => {
     const cell = (c) => {
       if (!c) return `<div class="calcell empty"></div>`;
       const cls = c.s === "today" ? "today" : c.s;
-      return `<div class="calcell click ${cls}" data-day="${c.n}"><span class="n">${c.n}</span><span class="nm">${esc(c.nm)}</span>${c.tag ? `<span class="tag">${esc(c.tag)}</span>` : ""}</div>`;
+      return `<div class="calcell click ${cls}" data-day="${esc(c.key || c.n)}"><span class="n">${c.n}</span><span class="nm">${esc(c.nm)}</span>${c.tag ? `<span class="tag">${esc(c.tag)}</span>` : ""}</div>`;
     };
     const calendar = `
       <div class="card desktop-only" data-cal-grid>
@@ -192,17 +195,18 @@ window.SCREENS = (() => {
         <div class="calgrid" style="margin-top:6px">${pa.weeks.map((w) => w.map(cell).join("")).join("")}</div>
       </div>`;
 
-    const detail = `<div class="card" id="pa-detail"></div>`;
+    const detail = `<div class="card" data-pa-detail></div>`;
 
     // mobile: 5-day mini strip + featured + list
-    const stripDays = [11, 12, 13, 15, 16, 17];
-    const strip = `<div class="row mobile-only" style="overflow-x:auto;gap:8px;margin-bottom:12px">${stripDays.map((n) => {
-      const d = pa.days[n]; const sc = { "ON PLAN": "green", MISSED: "orange", REPLACED: "amber", PLANNED: "blue" }[d.status];
-      return `<button class="calcell click ${n === pa.selectedDay ? "today" : sc}" data-day="${n}" style="min-width:62px;flex:0 0 auto"><span class="n">${n}</span><span class="nm">${esc(d.planned.split(" ")[0])}</span></button>`;
+    const stripDays = Object.keys(pa.days);
+    const strip = `<div class="row mobile-only" style="overflow-x:auto;gap:8px;margin-bottom:12px">${stripDays.map((key) => {
+      const d = pa.days[key]; const sc = { "ON PLAN": "green", MISSED: "orange", REPLACED: "amber", PLANNED: "blue" }[d.status];
+      return `<button class="calcell click ${key === String(pa.selectedDay) ? "today" : sc}" data-day="${esc(key)}" style="min-width:62px;flex:0 0 auto"><span class="n">${d.day || key}</span><span class="nm">${esc(d.planned.split(" ")[0])}</span></button>`;
     }).join("")}</div>`;
 
-    const mobileList = [12, 10].map((n) => {
-      const d = pa.days[n]; const sc = { "ON PLAN": "green", MISSED: "orange", REPLACED: "amber", PLANNED: "blue" }[d.status];
+    const listDays = stripDays.filter((key) => key !== String(pa.selectedDay) && pa.days[key].status !== "PLANNED").reverse().slice(0, 2);
+    const mobileList = listDays.map((key) => {
+      const d = pa.days[key]; const sc = { "ON PLAN": "green", MISSED: "orange", REPLACED: "amber", PLANNED: "blue" }[d.status];
       return `<div class="tile"><div class="between"><span class="label-mono">${esc(d.date)}</span>${pill(sc, d.status)}</div><div class="muted" style="font-size:12px;margin-top:6px">Planned ${esc(d.planned)} · Actual ${esc(d.actual)}</div></div>`;
     }).join("");
 
@@ -220,7 +224,7 @@ window.SCREENS = (() => {
 
   // render detail panel content (also called on day-select)
   function paDetailHtml(n) {
-    const d = STATE.planVsActual.days[n] || STATE.planVsActual.days[11];
+    const d = STATE.planVsActual.days[n] || Object.values(STATE.planVsActual.days)[0];
     const sc = { "ON PLAN": "green", MISSED: "orange", REPLACED: "amber", PLANNED: "blue" }[d.status] || "muted";
     return `
       <div class="between"><div style="font-weight:760;font-size:15px">${esc(d.date)}</div>${pill(sc, d.status)}</div>
@@ -237,6 +241,12 @@ window.SCREENS = (() => {
   function blocks() {
     const b = STATE.trainingBlock;
     const pct = Math.round((b.weekIndex / b.weekCount) * 100);
+    const deloadWeek = b.phases.findIndex((p) => p.state === "deload") + 1;
+    const deloadLabel = deloadWeek === 0
+      ? "NO DELOAD SCHEDULED"
+      : deloadWeek === b.weekIndex
+        ? "DELOAD THIS WEEK"
+        : `DELOAD IN ${deloadWeek - b.weekIndex} WEEK${deloadWeek - b.weekIndex === 1 ? "" : "S"}`;
     const stateStyle = {
       done: "border-color:rgba(70,201,139,.3);background:rgba(70,201,139,.07)",
       current: "border-color:rgba(79,140,255,.6);background:rgba(79,140,255,.08);box-shadow:0 0 0 3px rgba(79,140,255,.1)",
@@ -274,7 +284,7 @@ window.SCREENS = (() => {
         <div class="card"><p class="label-mono">PLANNED WEEKLY VOLUME · SETS/MUSCLE GROUP</p>${chart}</div>
         <div class="stack">
           <div class="card"><p class="label-mono">THIS WEEK'S FOCUS</p><div class="sec" style="margin-top:8px;font-size:12.5px;line-height:1.5">${esc(b.focus)}</div></div>
-          <div class="note-violet"><p class="label-mono" style="color:var(--rest-light)">DELOAD IN 3 WEEKS</p><div style="margin-top:6px;font-size:12.5px;line-height:1.5">${esc(b.deload)}</div></div>
+          <div class="note-violet"><p class="label-mono" style="color:var(--rest-light)">${esc(deloadLabel)}</p><div style="margin-top:6px;font-size:12.5px;line-height:1.5">${esc(b.deload)}</div></div>
         </div>
       </div>
     </div>`;
@@ -288,7 +298,7 @@ window.SCREENS = (() => {
           <div style="flex:1;padding-right:12px">
             <div style="font-weight:700;font-size:14px">${esc(r.label)}</div>
             <div class="muted" style="font-size:12px;margin-top:3px">${esc(r.description)}</div>
-            ${r.threshold ? `<div class="gradient-bar" style="margin-top:11px;max-width:260px"><div class="marker" style="left:${r.threshold}%"></div></div>` : ""}
+            ${r.threshold != null ? `<div class="gradient-bar" style="margin-top:11px;max-width:260px"><div class="marker" style="left:${r.threshold}%"></div></div>` : ""}
           </div>
           <button class="toggle ${r.enabled ? "on" : ""}" data-action="toggle-rule" data-idx="${i}" aria-label="Toggle rule"><span class="knob"></span></button>
         </div>
@@ -306,11 +316,11 @@ window.SCREENS = (() => {
   // ------------------------------------------------------------------- Coach Memory
   function memory() {
     const m = STATE.coachMemory;
-    const grp = (label, items, chipClass = "chip", strike = false) => `
+    const grp = (category, label, items, chipClass = "chip", strike = false) => `
       <div class="card">
         <p class="label-mono" style="margin-bottom:11px">${esc(label)}</p>
         <div class="row wrap" style="gap:8px">
-          ${items.map((it) => `<span class="chip ${chipClass} ${strike ? "chip-strike" : ""}"><span class="t">${esc(it)}</span><span class="x" data-action="remove-chip">×</span></span>`).join("")}
+          ${items.map((it, i) => `<span class="chip ${chipClass} ${strike ? "chip-strike" : ""}"><span class="t">${esc(it)}</span><span class="x" data-action="remove-chip" data-category="${esc(category)}" data-idx="${i}">×</span></span>`).join("")}
           <span class="chip chip-add" data-action="add-chip">+ add</span>
         </div>
       </div>`;
@@ -319,12 +329,12 @@ window.SCREENS = (() => {
       <button class="backchev mobile-only" data-action="back">${window.ICONS.chevronLeft(20)} Profile</button>
       ${head("Coach Memory", "What Coach plans around")}
       <div class="stack">
-        ${grp("INJURIES", m.injuries, "chip-orange")}
-        ${grp("SCHEDULE", m.schedule)}
-        ${grp("EQUIPMENT", m.equipment)}
+        ${grp("injuries", "INJURIES", m.injuries, "chip-orange")}
+        ${grp("schedule", "SCHEDULE", m.schedule)}
+        ${grp("equipment", "EQUIPMENT", m.equipment)}
         <div class="cols" style="grid-template-columns:1fr 1fr;gap:13px">
-          ${grp("PREFERS", m.prefers, "chip-green")}
-          ${grp("DISLIKES", m.dislikes, "", true)}
+          ${grp("prefers", "PREFERS", m.prefers, "chip-green")}
+          ${grp("dislikes", "DISLIKES", m.dislikes, "", true)}
         </div>
         <div class="grid2">
           <div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(m.targetEvent.title)}</div><div class="muted" style="font-size:12px">${esc(m.targetEvent.meta)}</div></div>
@@ -394,6 +404,11 @@ window.SCREENS = (() => {
         <div style="padding-right:12px"><div style="font-weight:700;font-size:13.5px">${esc(p.label)}</div><div class="muted" style="font-size:11.5px">${esc(p.description)}</div></div>
         <button class="toggle ${p.enabled ? "on" : ""}" data-action="toggle-pref" data-idx="${i}" aria-label="Toggle"><span class="knob"></span></button>
       </div>`).join("");
+    const push = STATE.pushNotifications;
+    const pushRow = `<div class="between" style="padding:11px 0;border-bottom:1px solid var(--hairline)">
+      <div style="padding-right:12px"><div style="font-weight:700;font-size:13.5px">Push notifications</div><div class="muted" style="font-size:11.5px">${esc(push.hint)}</div></div>
+      <button class="toggle ${push.subscribed ? "on" : ""}" data-action="toggle-push" aria-label="Toggle push notifications" ${push.available ? "" : "disabled"}><span class="knob"></span></button>
+    </div>`;
 
     // mobile lock screen
     const lock = `
@@ -409,9 +424,9 @@ window.SCREENS = (() => {
       ${lock}
       <div class="cols c-1_3 desktop-only">
         <div class="stack">${nudgeFeed}</div>
-        <div class="card"><p class="label-mono" style="margin-bottom:6px">PREFERENCES</p>${prefs}</div>
+        <div class="card"><p class="label-mono" style="margin-bottom:6px">PREFERENCES</p>${pushRow}${prefs}</div>
       </div>
-      <div class="card mobile-only" style="margin-top:14px"><p class="label-mono" style="margin-bottom:6px">PREFERENCES</p>${prefs}</div>
+      <div class="card mobile-only" style="margin-top:14px"><p class="label-mono" style="margin-bottom:6px">PREFERENCES</p>${pushRow}${prefs}</div>
     </div>`;
   }
 

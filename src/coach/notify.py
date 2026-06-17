@@ -9,8 +9,11 @@ from __future__ import annotations
 import json
 import logging
 import smtplib
+from datetime import datetime
 from email.message import EmailMessage
+from zoneinfo import ZoneInfo
 
+from coach import notification_prefs
 from coach.config import settings
 from coach.db import SessionLocal
 from coach.integrations import notion
@@ -116,8 +119,29 @@ def send_web_push(subject: str, body: str) -> int:
     return sent
 
 
-def send(subject: str, body: str) -> list[str]:
-    """Deliver to every configured channel. Returns the channels used."""
+def _quiet_hours_active(now: datetime | None = None) -> bool:
+    local_now = now or datetime.now(ZoneInfo(settings.scheduler_timezone))
+    return local_now.hour >= 21 or local_now.hour < 6
+
+
+def send(
+    subject: str,
+    body: str,
+    preference_key: str | None = None,
+    *,
+    urgent: bool = False,
+) -> list[str]:
+    """Deliver to configured channels when its preference permits delivery."""
+    if preference_key and not notification_prefs.is_enabled(preference_key):
+        log.info("notification delivery disabled by preference %s", preference_key)
+        return []
+    if (
+        not urgent
+        and notification_prefs.is_enabled("quietHours")
+        and _quiet_hours_active()
+    ):
+        log.info("non-urgent notification held during quiet hours")
+        return []
     used: list[str] = []
     if email_configured():
         send_email(subject, body)

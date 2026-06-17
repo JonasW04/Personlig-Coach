@@ -33,6 +33,42 @@
 
   <div class="toast" id="toast"></div>
 
+  <dialog class="block-modal" id="block-modal">
+    <form id="block-form">
+      <div class="between">
+        <div><div class="eyebrow">Periodization</div><h2 class="screen-title">New training block</h2></div>
+        <button class="iconbtn" type="button" data-action="close-block-modal" aria-label="Close">×</button>
+      </div>
+      <div class="block-form-grid">
+        <label>Name<input class="input" name="name" type="text" maxlength="200" required /></label>
+        <label>Goal<select class="input" name="goal"><option value="hypertrophy">Hypertrophy</option><option value="strength">Strength</option><option value="endurance">Endurance</option><option value="general">General</option></select></label>
+        <label>Start date<input class="input" id="block-start" name="start_date" type="date" required /></label>
+        <label>Weeks<input class="input" name="weeks" type="number" min="2" max="16" value="6" required /></label>
+      </div>
+      <label class="block-check"><input name="include_deload" type="checkbox" checked /> Include final deload week</label>
+      <div class="statusline" id="block-form-status" aria-live="polite"></div>
+      <div class="row block-form-actions"><button class="btn btn-outline" type="button" data-action="close-block-modal">Cancel</button><button class="btn btn-primary" type="submit">Create block</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="block-modal" id="rule-modal">
+    <form id="rule-form">
+      <div class="between">
+        <div><div class="eyebrow">Guardrails</div><h2 class="screen-title">New recovery rule</h2></div>
+        <button class="iconbtn" type="button" data-action="close-rule-modal" aria-label="Close">×</button>
+      </div>
+      <div class="rule-form-grid">
+        <label>Label<input class="input" name="label" type="text" maxlength="200" required /></label>
+        <label>Description<textarea class="input" name="description" maxlength="1000" rows="3" required></textarea></label>
+        <label>Metric (optional)<select class="input" id="rule-metric" name="metric"><option value="">Structural rule</option><option value="training_readiness">Training readiness</option><option value="acwr">ACWR</option><option value="sleep_score">Sleep score</option><option value="hrv">HRV</option><option value="body_battery_high">Body Battery</option><option value="resting_hr">Resting heart rate</option><option value="avg_stress">Average stress</option></select></label>
+        <div class="rule-condition-row"><label>Operator<select class="input" id="rule-operator" name="operator"><option value="<">&lt;</option><option value="<=">≤</option><option value=">">&gt;</option><option value=">=">≥</option></select></label><label>Value<input class="input" id="rule-value" name="value" type="number" step="any" /></label></div>
+        <label>Action<select class="input" name="action"><option value="rest">Rest</option><option value="swap_to_zone2">Swap to Zone 2</option><option value="reduce_volume">Reduce volume</option><option value="cap_intensity">Cap intensity</option></select></label>
+      </div>
+      <div class="statusline" id="rule-form-status" aria-live="polite"></div>
+      <div class="row block-form-actions"><button class="btn btn-outline" type="button" data-action="close-rule-modal">Cancel</button><button class="btn btn-primary" type="submit">Create rule</button></div>
+    </form>
+  </dialog>
+
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
   <script src="coach.data.js"></script>
   <script src="coach.icons.js"></script>

@@ -214,5 +214,9 @@ async def generate_and_store(kind: str) -> Report:
         except Exception:  # noqa: BLE001 — never fail a report over its action plan
             log.exception("failed to extract/store weekly actions")
     subject = f"{_SPECS[kind][2]} — {date.today():%Y-%m-%d}"
-    notify.send(subject, content)
+    notify.send(
+        subject,
+        content,
+        preference_key="weeklyReview" if kind == "weekly" else None,
+    )
     return report

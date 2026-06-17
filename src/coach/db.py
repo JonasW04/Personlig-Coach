@@ -33,6 +33,26 @@ _COLUMN_MIGRATIONS = [
     "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS resting_hr_7d_avg INTEGER",
     "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS avg_sleep_respiration DOUBLE PRECISION",
     "ALTER TABLE garmin_daily ADD COLUMN IF NOT EXISTS avg_sleep_spo2 DOUBLE PRECISION",
+    "ALTER TABLE coach_memories ADD COLUMN IF NOT EXISTS category VARCHAR NOT NULL DEFAULT 'note'",
+    "ALTER TABLE coach_profile ADD COLUMN IF NOT EXISTS body_mode VARCHAR",
+    "ALTER TABLE coach_profile ADD COLUMN IF NOT EXISTS body_mode_started_at TIMESTAMP WITH TIME ZONE",
+    "ALTER TABLE coach_profile ADD COLUMN IF NOT EXISTS body_mode_week_count INTEGER",
+    """DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint c
+            JOIN pg_attribute a
+              ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+            WHERE c.conrelid = 'plan_days'::regclass
+              AND c.contype = 'f'
+              AND a.attname = 'block_id'
+        ) THEN
+            ALTER TABLE plan_days
+            ADD CONSTRAINT fk_plan_days_block_id
+            FOREIGN KEY (block_id) REFERENCES training_blocks(id);
+        END IF;
+    END $$""",
 ]
 
 

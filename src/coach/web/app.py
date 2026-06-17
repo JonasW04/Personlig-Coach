@@ -17,8 +17,10 @@ import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 
 import uvicorn
+import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
@@ -28,22 +30,26 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
-from coach import focus, memory
+from coach import body_mode, focus, memory, notification_prefs, plan, rules
 from coach.agents.gemini import GeminiCoachSession, StepEvent, TextEvent
 from coach.config import settings
 from coach.db import SessionLocal, init_db
+from coach.integrations import garmin, hevy
 from coach.models import (
     ActionItem,
     ChatConversation,
     ChatMessage,
     CoachMemory,
     Goal,
+    PlanDay,
     PushSubscription,
     Report,
+    RecoveryRule,
+    TrainingBlock,
 )
 from coach.web import stats
 
@@ -390,16 +396,23 @@ async def delete_chat(sid: str) -> dict:
 # ------------------------------------------------------------------------ memory
 class MemoryCreate(BaseModel):
     content: str
+    category: str = "note"
 
 
 @app.get("/api/memories")
 async def get_memories() -> dict:
-    return {"memories": await asyncio.to_thread(memory.list_memories)}
+    rows = await asyncio.to_thread(memory.list_memories)
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        groups.setdefault(row["category"], []).append(row)
+    return {"memories": rows, "groups": groups}
 
 
 @app.post("/api/memories")
 async def add_memory(req: MemoryCreate) -> dict:
-    saved = await asyncio.to_thread(memory.add_memory, req.content, "manual")
+    saved = await asyncio.to_thread(
+        memory.add_memory, req.content, "manual", req.category
+    )
     if saved is None:
         raise HTTPException(400, "content is required")
     # New memory must reach live chat clients + future reports immediately.
@@ -427,6 +440,503 @@ async def get_stats(start: str | None = None, end: str | None = None) -> dict:
 @app.get("/api/health")
 async def get_health(start: str | None = None, end: str | None = None) -> dict:
     return await asyncio.to_thread(stats.health, start, end)
+
+
+def _plan_response(week_start: date, days: list[PlanDay]) -> dict:
+    return {
+        "week_start": week_start.isoformat(),
+        "days": [plan.plan_day_json(day) for day in days],
+    }
+
+
+def _requested_week(value: str) -> date:
+    if value == "current":
+        return _week_start()
+    try:
+        return _week_start(date.fromisoformat(value))
+    except ValueError as exc:
+        raise HTTPException(400, "week must be 'current' or an ISO date") from exc
+
+
+class PlanGenerateRequest(BaseModel):
+    week_start: date
+
+
+class PlanReplanRequest(BaseModel):
+    from_date: date
+
+
+@app.get("/api/plan")
+async def get_plan(week: str = "current") -> dict:
+    week_start = _requested_week(week)
+    days = await asyncio.to_thread(plan.get_week, week_start)
+    return _plan_response(week_start, days)
+
+
+@app.post("/api/plan/generate")
+async def generate_plan(req: PlanGenerateRequest) -> dict:
+    week_start = _week_start(req.week_start)
+    try:
+        days = await plan.generate_week(week_start)
+    except plan.PlanGenerationError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return _plan_response(week_start, days)
+
+
+@app.post("/api/plan/replan")
+async def replan(req: PlanReplanRequest) -> dict:
+    week_start = _week_start(req.from_date)
+    try:
+        days = await plan.replan_from(req.from_date)
+    except plan.PlanGenerationError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return _plan_response(week_start, days)
+
+
+@app.get("/api/plan/day/{planned_date}")
+async def get_plan_day(planned_date: date) -> dict:
+    with SessionLocal() as session:
+        day = session.execute(
+            select(PlanDay).where(PlanDay.date == planned_date)
+        ).scalars().first()
+    if day is None:
+        raise HTTPException(404, "planned session not found")
+    return plan.plan_day_json(day)
+
+
+@app.post("/api/plan/day/{planned_date}/push-hevy")
+async def push_plan_day_to_hevy(planned_date: date) -> dict:
+    with SessionLocal() as session:
+        day = session.execute(
+            select(PlanDay).where(PlanDay.date == planned_date)
+        ).scalars().first()
+    if day is None:
+        raise HTTPException(404, "planned session not found")
+    if day.kind != "strength":
+        raise HTTPException(400, "only strength sessions can be pushed to Hevy")
+    try:
+        payload = json.loads(day.payload_json or "{}")
+        routine_id = await asyncio.to_thread(
+            hevy.push_routine,
+            day.title,
+            payload,
+            day.hevy_routine_id,
+        )
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, "planned session payload is invalid") from exc
+    except hevy.HevyConfigurationError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except hevy.HevyRoutineError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Hevy API request failed") from exc
+
+    with SessionLocal() as session:
+        saved = session.execute(
+            select(PlanDay).where(PlanDay.date == planned_date)
+        ).scalars().first()
+        if saved is None:
+            raise HTTPException(409, "planned session changed during Hevy push")
+        saved.hevy_routine_id = routine_id
+        saved.status = "ready_in_hevy"
+        session.commit()
+        session.refresh(saved)
+        session.expunge(saved)
+    return plan.plan_day_json(saved)
+
+
+@app.post("/api/plan/day/{planned_date}/schedule-garmin")
+async def schedule_plan_day_in_garmin(planned_date: date) -> dict:
+    with SessionLocal() as session:
+        day = session.execute(
+            select(PlanDay).where(PlanDay.date == planned_date)
+        ).scalars().first()
+    if day is None:
+        raise HTTPException(404, "planned session not found")
+    if day.kind != "cardio":
+        raise HTTPException(400, "only cardio sessions can be scheduled in Garmin")
+    if day.garmin_workout_id and day.status == "scheduled":
+        return plan.plan_day_json(day)
+    try:
+        payload = json.loads(day.payload_json or "{}")
+        workout_id = await asyncio.to_thread(
+            garmin.schedule_cardio_workout, day.title, payload, day.date
+        )
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, "planned session payload is invalid") from exc
+    except garmin.GarminWorkoutPayloadError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except garmin.GarminConnectAuthenticationError as exc:
+        raise HTTPException(503, "Garmin is not authorized") from exc
+    except garmin.GarminWorkoutRequestError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    with SessionLocal() as session:
+        saved = session.execute(
+            select(PlanDay).where(PlanDay.date == planned_date)
+        ).scalars().first()
+        if saved is None:
+            raise HTTPException(409, "planned session changed during Garmin scheduling")
+        saved.garmin_workout_id = workout_id
+        saved.status = "scheduled"
+        session.commit()
+        session.refresh(saved)
+        session.expunge(saved)
+    return plan.plan_day_json(saved)
+
+
+# ---------------------------------------------------------------- training blocks
+BLOCK_GOALS = {"hypertrophy", "strength", "endurance", "general"}
+
+
+def _default_block_phases(weeks: int, include_deload: bool) -> list[dict]:
+    phases = [
+        {
+            "week": week,
+            "label": "Accumulate" if week % 2 else "Intensify",
+            "sets": 16 + (week - 1) * 2,
+        }
+        for week in range(1, weeks + 1)
+    ]
+    if include_deload:
+        phases[-1] = {
+            "week": weeks,
+            "label": "Deload",
+            "sets": round(phases[-2]["sets"] * 0.6),
+        }
+    return phases
+
+
+def _default_block_content(goal: str, include_deload: bool) -> tuple[str, str]:
+    focus = {
+        "hypertrophy": "Build high-quality volume at the prescribed sets per muscle group.",
+        "strength": "Prioritize crisp compound work while keeping accessory volume on target.",
+        "endurance": "Build repeatable aerobic work while preserving strength quality.",
+        "general": "Balance strength and conditioning at a sustainable weekly volume.",
+    }[goal]
+    deload = (
+        "Reduce volume to roughly 60% and keep effort controlled to absorb the block."
+        if include_deload
+        else "No deload week is scheduled in this block."
+    )
+    return focus, deload
+
+
+def _block_phases(block: TrainingBlock) -> list[dict]:
+    try:
+        phases = json.loads(block.phases_json or "[]")
+    except json.JSONDecodeError:
+        return []
+    return phases if isinstance(phases, list) else []
+
+
+def _block_sub(block: TrainingBlock) -> str:
+    start = block.start_date.strftime("%b %-d")
+    end = block.end_date.strftime("%b %-d")
+    return f"{start} – {end} · {block.goal.title()}"
+
+
+def _block_renderer_json(block: TrainingBlock, today: date | None = None) -> dict:
+    today = today or date.today()
+    phases = _block_phases(block)
+    week_count = len(phases)
+    week_index = max(
+        1,
+        min(week_count, ((today - block.start_date).days // 7) + 1),
+    )
+    rendered = []
+    for phase in phases:
+        phase_week = phase["week"]
+        phase_start = block.start_date + timedelta(weeks=phase_week - 1)
+        phase_end = phase_start + timedelta(days=6)
+        if phase["label"].lower() == "deload":
+            state = "deload"
+        elif today > phase_end:
+            state = "done"
+        elif phase_start <= today <= phase_end:
+            state = "current"
+        else:
+            state = "planned"
+        rendered.append(
+            {
+                "wk": f"W{phase_week}",
+                "phase": phase["label"],
+                "sets": phase["sets"],
+                "state": state,
+            }
+        )
+    return {
+        "name": block.name,
+        "sub": _block_sub(block),
+        "weekIndex": week_index,
+        "weekCount": week_count,
+        "focus": block.focus,
+        "deload": block.deload,
+        "phases": rendered,
+    }
+
+
+def _blocks_response() -> dict:
+    with SessionLocal() as session:
+        rows = list(
+            session.execute(
+                select(TrainingBlock).order_by(
+                    TrainingBlock.active.desc(), TrainingBlock.start_date.desc()
+                )
+            ).scalars()
+        )
+    active = next((row for row in rows if row.active), None)
+    return {
+        "blocks": [
+            {"id": row.id, "name": row.name, "sub": _block_sub(row), "active": row.active}
+            for row in rows
+        ],
+        "active": _block_renderer_json(active) if active else None,
+    }
+
+
+class BlockCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    goal: str
+    start_date: date
+    weeks: int = Field(default=6, ge=2, le=16)
+    include_deload: bool = True
+
+
+class BlockUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    goal: str | None = None
+    start_date: date | None = None
+    weeks: int | None = Field(default=None, ge=2, le=16)
+    include_deload: bool | None = None
+    focus: str | None = Field(default=None, min_length=1)
+    deload: str | None = Field(default=None, min_length=1)
+    active: bool | None = None
+
+
+def _valid_block_goal(goal: str) -> str:
+    goal = goal.strip().lower()
+    if goal not in BLOCK_GOALS:
+        raise HTTPException(400, "goal must be hypertrophy, strength, endurance, or general")
+    return goal
+
+
+@app.get("/api/blocks")
+async def get_blocks() -> dict:
+    return _blocks_response()
+
+
+@app.post("/api/blocks")
+async def create_block(req: BlockCreate) -> dict:
+    goal = _valid_block_goal(req.goal)
+    phases = _default_block_phases(req.weeks, req.include_deload)
+    focus_text, deload_text = _default_block_content(goal, req.include_deload)
+    with SessionLocal() as session:
+        for current in session.execute(
+            select(TrainingBlock).where(TrainingBlock.active.is_(True))
+        ).scalars():
+            current.active = False
+        session.add(
+            TrainingBlock(
+                name=req.name.strip(),
+                goal=goal,
+                start_date=req.start_date,
+                end_date=req.start_date + timedelta(weeks=req.weeks) - timedelta(days=1),
+                phases_json=json.dumps(phases),
+                focus=focus_text,
+                deload=deload_text,
+                active=True,
+            )
+        )
+        session.commit()
+    return _blocks_response()
+
+
+@app.patch("/api/blocks/{block_id}")
+async def update_block(block_id: int, req: BlockUpdate) -> dict:
+    with SessionLocal() as session:
+        block = session.get(TrainingBlock, block_id)
+        if block is None:
+            raise HTTPException(404, "training block not found")
+        if req.name is not None:
+            block.name = req.name.strip()
+        if req.goal is not None:
+            block.goal = _valid_block_goal(req.goal)
+        phases = _block_phases(block)
+        weeks = req.weeks if req.weeks is not None else len(phases)
+        include_deload = (
+            req.include_deload
+            if req.include_deload is not None
+            else bool(phases and phases[-1]["label"].lower() == "deload")
+        )
+        if req.start_date is not None:
+            block.start_date = req.start_date
+        if req.weeks is not None or req.include_deload is not None:
+            block.phases_json = json.dumps(_default_block_phases(weeks, include_deload))
+        block.end_date = block.start_date + timedelta(weeks=weeks) - timedelta(days=1)
+        default_focus, default_deload = _default_block_content(block.goal, include_deload)
+        if req.focus is not None:
+            block.focus = req.focus.strip()
+        elif req.goal is not None:
+            block.focus = default_focus
+        if req.deload is not None:
+            block.deload = req.deload.strip()
+        elif req.include_deload is not None:
+            block.deload = default_deload
+        if req.active is not None:
+            if req.active:
+                for current in session.execute(
+                    select(TrainingBlock).where(
+                        TrainingBlock.active.is_(True), TrainingBlock.id != block.id
+                    )
+                ).scalars():
+                    current.active = False
+            block.active = req.active
+        session.commit()
+    return _blocks_response()
+
+
+# ---------------------------------------------------------------- recovery rules
+class RuleCondition(BaseModel):
+    metric: Literal[
+        "training_readiness",
+        "acwr",
+        "sleep_score",
+        "hrv",
+        "body_battery_high",
+        "resting_hr",
+        "avg_stress",
+    ]
+    op: Literal["<", "<=", ">", ">="]
+    value: float
+
+
+class RuleCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=1000)
+    condition: RuleCondition | None = None
+    action: Literal["rest", "swap_to_zone2", "reduce_volume", "cap_intensity"]
+    enabled: bool = True
+    order_index: int | None = Field(default=None, ge=0)
+
+
+class RuleUpdate(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, min_length=1, max_length=1000)
+    condition: RuleCondition | None = None
+    action: Literal["rest", "swap_to_zone2", "reduce_volume", "cap_intensity"] | None = None
+    enabled: bool | None = None
+    order_index: int | None = Field(default=None, ge=0)
+
+
+def _rule_threshold(condition: dict | None) -> float | None:
+    if condition is None:
+        return None
+    metric = condition.get("metric")
+    value = condition.get("value")
+    if not isinstance(value, (int, float)):
+        return None
+    if metric in {"training_readiness", "sleep_score", "body_battery_high", "avg_stress"}:
+        return max(0, min(100, value))
+    if metric == "acwr":
+        return max(0, min(100, value / 2 * 100))
+    return None
+
+
+def _rule_json(rule: RecoveryRule) -> dict:
+    parsed = rules.condition(rule)
+    return {
+        "id": rule.id,
+        "label": rule.label,
+        "description": rule.description,
+        "condition": parsed,
+        "action": rule.action,
+        "enabled": bool(rule.enabled),
+        "order_index": rule.order_index,
+        "threshold": _rule_threshold(parsed),
+    }
+
+
+def _latest_health_day() -> dict | None:
+    days = stats.health().get("days", [])
+    return days[-1] if days else None
+
+
+def _rules_response() -> dict:
+    with SessionLocal() as session:
+        rows = list(
+            session.execute(select(RecoveryRule).order_by(RecoveryRule.order_index)).scalars()
+        )
+    triggered = rules.evaluate(rows, _latest_health_day())
+    return {
+        "rules": [_rule_json(row) for row in rows],
+        "triggered": [_rule_json(row) for row in triggered],
+        "warning": rules.message(triggered[0]) if triggered else None,
+    }
+
+
+@app.get("/api/rules")
+async def get_rules() -> dict:
+    return _rules_response()
+
+
+@app.post("/api/rules")
+async def create_rule(req: RuleCreate) -> dict:
+    with SessionLocal() as session:
+        if req.order_index is None:
+            last_order = session.execute(
+                select(RecoveryRule.order_index)
+                .order_by(RecoveryRule.order_index.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            order_index = (last_order + 1) if last_order is not None else 0
+        else:
+            order_index = req.order_index
+        session.add(
+            RecoveryRule(
+                label=req.label.strip(),
+                description=req.description.strip(),
+                condition_json=req.condition.model_dump_json() if req.condition else None,
+                action=req.action,
+                enabled=req.enabled,
+                order_index=order_index,
+            )
+        )
+        session.commit()
+    return _rules_response()
+
+
+@app.patch("/api/rules/{rule_id}")
+async def update_rule(rule_id: int, req: RuleUpdate) -> dict:
+    with SessionLocal() as session:
+        rule = session.get(RecoveryRule, rule_id)
+        if rule is None:
+            raise HTTPException(404, "recovery rule not found")
+        if req.label is not None:
+            rule.label = req.label.strip()
+        if req.description is not None:
+            rule.description = req.description.strip()
+        if "condition" in req.model_fields_set:
+            rule.condition_json = req.condition.model_dump_json() if req.condition else None
+        if req.action is not None:
+            rule.action = req.action
+        if req.enabled is not None:
+            rule.enabled = req.enabled
+        if req.order_index is not None:
+            rule.order_index = req.order_index
+        session.commit()
+    return _rules_response()
+
+
+@app.delete("/api/rules/{rule_id}")
+async def delete_rule(rule_id: int) -> dict:
+    with SessionLocal() as session:
+        rule = session.get(RecoveryRule, rule_id)
+        if rule is None:
+            raise HTTPException(404, "recovery rule not found")
+        session.delete(rule)
+        session.commit()
+    return {"ok": True}
 
 
 class GoalUpdate(BaseModel):
@@ -458,6 +968,20 @@ async def update_goals(req: GoalsUpdate) -> dict:
             row.enabled = item.enabled
         s.commit()
     return {"goals": _goals_json()}
+
+
+class BodyModeUpdate(BaseModel):
+    mode: Literal["cut", "bulk", "recomp", "perf"]
+
+
+@app.get("/api/body-mode")
+async def get_body_mode() -> dict:
+    return await asyncio.to_thread(body_mode.get_body_mode)
+
+
+@app.put("/api/body-mode")
+async def update_body_mode(req: BodyModeUpdate) -> dict:
+    return await asyncio.to_thread(body_mode.set_body_mode, req.mode)
 
 
 @app.post("/api/sync", response_model=None)
@@ -603,6 +1127,24 @@ async def import_latest_actions() -> dict:
 
 
 # ------------------------------------------------------------------ notifications
+class NotificationPrefUpdate(BaseModel):
+    key: Literal["dailyPlan", "recoveryAlerts", "planDrift", "weeklyReview", "quietHours"]
+    enabled: bool
+
+
+@app.get("/api/notification-prefs")
+async def get_notification_prefs() -> dict:
+    return {"prefs": await asyncio.to_thread(notification_prefs.list_preferences)}
+
+
+@app.put("/api/notification-prefs")
+async def update_notification_pref(req: NotificationPrefUpdate) -> dict:
+    prefs = await asyncio.to_thread(
+        notification_prefs.set_preference, req.key, req.enabled
+    )
+    return {"prefs": prefs}
+
+
 class PushSubscriptionKeys(BaseModel):
     p256dh: str
     auth: str

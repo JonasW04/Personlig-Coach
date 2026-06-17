@@ -2,18 +2,30 @@
 (() => {
   const S = window.SCREENS, I = window.ICONS, $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const todayStaticJson = JSON.stringify(window.STATE.today);
+  const weekPlanStaticJson = JSON.stringify(window.STATE.weekPlan);
+  const builderStaticJson = JSON.stringify(window.STATE.builder);
+  const blocksStaticJson = JSON.stringify(window.STATE.trainingBlock);
+  const rulesStaticJson = JSON.stringify(window.STATE.recoveryRules);
+  const bodyModeStaticJson = JSON.stringify(window.STATE.bodyMode);
+  const notificationPrefsStaticJson = JSON.stringify(window.STATE.notificationPrefs);
+  const pushNotificationsStaticJson = JSON.stringify(window.STATE.pushNotifications);
+  const actualStaticJson = JSON.stringify(window.STATE.planVsActual);
+  const memoryStaticJson = JSON.stringify(window.STATE.coachMemory);
+  let memoryIds = {};
+  let pushRegistration = null;
 
   // ----- views & navigation model
   const VIEWS = {
-    today: { tab: "today", render: S.today },
-    plan: { tab: "plan", sub: "plan", render: S.plan },
-    builder: { tab: "plan", sub: "plan", render: S.builder },
-    blocks: { tab: "plan", sub: "plan", render: S.blocks },
+    today: { tab: "today", render: S.today, after: wireToday },
+    plan: { tab: "plan", sub: "plan", render: S.plan, after: wirePlan },
+    builder: { tab: "plan", sub: "plan", render: S.builder, after: wireBuilder },
+    blocks: { tab: "plan", sub: "plan", render: S.blocks, after: wireBlocks },
     actual: { tab: "activity", render: S.actual, after: wireActual },
-    goals: { tab: "health", sub: "health", render: S.goals },
-    rules: { tab: "health", sub: "health", render: S.rules },
-    memory: { tab: "chat", sub: "settings", render: S.memory },
-    notifications: { tab: null, sub: "settings", render: S.notifications },
+    goals: { tab: "health", sub: "health", render: S.goals, after: wireGoals },
+    rules: { tab: "health", sub: "health", render: S.rules, after: wireRules },
+    memory: { tab: "chat", sub: "settings", render: S.memory, after: wireMemory },
+    notifications: { tab: null, sub: "settings", render: S.notifications, after: wireNotifications },
     reviews: { tab: "reviews", render: renderReviews, after: loadReviews },
     chat: { tab: "chat", render: S.chat, after: wireChat },
   };
@@ -85,46 +97,674 @@
       case "settings": return nav("notifications");
       case "back": return nav(VIEWS[current].tab ? TAB_DEFAULT[VIEWS[current].tab] : "today");
       case "view-workout": return nav("builder");
-      case "open-hevy": return openExternal("https://hevy.com/", "Opening Hevy…");
-      case "open-garmin": return openExternal("https://connect.garmin.com/", "Opening Garmin Connect…");
+      case "open-hevy": return openHevy();
+      case "open-garmin": return openExternal("https://connect.garmin.com/modern/calendar", "Opening Garmin Connect…");
+      case "schedule-garmin": return scheduleGarmin(t);
       case "copy-workout": return copyWorkout();
       case "sync": return runSync();
-      case "replan-today": return toast("Re-planning today…");
-      case "regenerate-week": return toast("Regenerating week…");
-      case "new-block": return toast("New block — coming soon");
+      case "replan-today": return replanToday();
+      case "regenerate-week": return regenerateWeek();
+      case "new-block": return openBlockModal();
+      case "close-block-modal": return closeBlockModal();
       case "swap-exercise": return toast("Pick a replacement exercise");
       case "open-day": return nav("actual");
       case "nudge-action": return toast(t.textContent.trim());
       case "toggle-rule": return toggleRule(t);
       case "toggle-pref": return togglePref(t);
+      case "toggle-push": return togglePush();
       case "set-mode": return setMode(t);
-      case "add-rule": return toast("Add a rule — coming soon");
-      case "add-chip": return toast("Add a memory — tell Coach in chat");
-      case "remove-chip": return t.closest(".chip")?.remove();
+      case "add-rule": return openRuleModal();
+      case "close-rule-modal": return closeRuleModal();
+      case "add-chip": return nav("chat");
+      case "remove-chip": return removeMemory(t);
     }
   });
 
   // ----- interactions
-  function toggleRule(btn) {
+  async function toggleRule(btn) {
     const i = +btn.dataset.idx;
-    STATE.recoveryRules[i].enabled = !STATE.recoveryRules[i].enabled;
-    btn.classList.toggle("on", STATE.recoveryRules[i].enabled);
+    const rule = STATE.recoveryRules[i];
+    if (!rule || rule.id == null) return toast("Could not update this rule");
+    try {
+      const response = await fetch(`/api/rules/${rule.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !rule.enabled }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      nav("rules");
+    } catch {
+      toast("Could not update rule");
+    }
   }
-  function togglePref(btn) {
+  async function togglePref(btn) {
     const i = +btn.dataset.idx;
-    STATE.notificationPrefs[i].enabled = !STATE.notificationPrefs[i].enabled;
-    btn.classList.toggle("on", STATE.notificationPrefs[i].enabled);
-  }
-  function setMode(btn) {
-    STATE.bodyMode.mode = btn.dataset.mode;
-    nav("goals");
+    const pref = STATE.notificationPrefs[i];
+    if (!pref) return toast("Could not update preference");
+    try {
+      const response = await fetch("/api/notification-prefs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: pref.key, enabled: !pref.enabled }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      nav("notifications");
+    } catch {
+      toast("Could not update preference");
+    }
   }
 
-  function wireActual(root) {
-    const fill = (n) => { const d = $("#pa-detail", root); if (d) d.innerHTML = S.paDetailHtml(n); };
+  function pushSupported() {
+    return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  }
+
+  function vapidKey(value) {
+    const padding = "=".repeat((4 - value.length % 4) % 4);
+    const raw = atob((value + padding).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+  }
+
+  async function ensurePushRegistration() {
+    await navigator.serviceWorker.register("/sw.js");
+    return navigator.serviceWorker.ready;
+  }
+
+  async function wireNotifications(root) {
+    const render = () => {
+      root.innerHTML = S.notifications().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("settings", "notifications")}`);
+    };
+    STATE.notificationPrefs = JSON.parse(notificationPrefsStaticJson);
+    STATE.pushNotifications = JSON.parse(pushNotificationsStaticJson);
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    const getJson = async (path) => {
+      try {
+        const response = await fetch(path);
+        return response.ok ? await response.json() : null;
+      } catch {
+        return null;
+      }
+    };
+    const [prefsData, config] = await Promise.all([
+      getJson("/api/notification-prefs"),
+      getJson("/api/push/config"),
+    ]);
+    const keys = ["dailyPlan", "recoveryAlerts", "planDrift", "weeklyReview", "quietHours"];
+    if (Array.isArray(prefsData?.prefs) && keys.every((key, i) => prefsData.prefs[i]?.key === key)) {
+      STATE.notificationPrefs = prefsData.prefs;
+    }
+    if (!config?.enabled) {
+      STATE.pushNotifications.hint = "Web Push is not configured on this server.";
+      return render();
+    }
+    if (!pushSupported()) {
+      STATE.pushNotifications.hint = "Push is not supported in this browser.";
+      return render();
+    }
+    if (Notification.permission === "denied") {
+      STATE.pushNotifications.hint = "Notifications are blocked in browser settings.";
+      return render();
+    }
+    try {
+      pushRegistration = await ensurePushRegistration();
+      const subscription = await pushRegistration.pushManager.getSubscription();
+      STATE.pushNotifications = {
+        available: true,
+        subscribed: Boolean(subscription),
+        publicKey: config.public_key,
+        hint: subscription
+          ? "This browser receives enabled Coach notifications."
+          : "Enable notifications for this browser.",
+      };
+    } catch {
+      STATE.pushNotifications.hint = "Could not initialize browser push.";
+    }
+    render();
+  }
+
+  async function togglePush() {
+    const push = STATE.pushNotifications;
+    if (!push.available || !push.publicKey) return;
+    try {
+      pushRegistration ||= await ensurePushRegistration();
+      const existing = await pushRegistration.pushManager.getSubscription();
+      if (existing) {
+        const response = await fetch("/api/push/unsubscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: existing.endpoint }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        await existing.unsubscribe();
+      } else {
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") throw new Error("Permission not granted");
+        const subscription = await pushRegistration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: vapidKey(push.publicKey),
+        });
+        const response = await fetch("/api/push/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(subscription.toJSON()),
+        });
+        if (!response.ok) {
+          await subscription.unsubscribe();
+          throw new Error(`HTTP ${response.status}`);
+        }
+      }
+      nav("notifications");
+    } catch {
+      toast("Could not update push notifications");
+    }
+  }
+  async function setMode(btn) {
+    const mode = btn.dataset.mode;
+    if (!STATE.bodyMode.modes.some((item) => item.key === mode) || mode === STATE.bodyMode.mode) return;
+    try {
+      const response = await fetch("/api/body-mode", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      nav("goals");
+    } catch {
+      toast("Could not update body mode");
+    }
+  }
+
+  async function wireRules(root) {
+    const render = () => {
+      root.innerHTML = S.rules().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("health", "rules")}`);
+    };
+    const fallback = () => { STATE.recoveryRules = JSON.parse(rulesStaticJson); render(); };
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    try {
+      const response = await fetch("/api/rules");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (!Array.isArray(data.rules)) return fallback();
+      STATE.recoveryRules = data.rules;
+      render();
+    } catch {
+      fallback();
+    }
+  }
+
+  function openRuleModal() {
+    const dialog = $("#rule-modal");
+    if (!dialog) return toast("Rule editor is updating — reload once");
+    $("#rule-form-status").textContent = "";
+    dialog.showModal();
+  }
+
+  function closeRuleModal() {
+    const dialog = $("#rule-modal");
+    if (dialog.open) dialog.close();
+  }
+
+  async function wireBlocks(root) {
+    const render = () => {
+      root.innerHTML = S.blocks().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("plan", "blocks")}`);
+    };
+    const fallback = () => { STATE.trainingBlock = JSON.parse(blocksStaticJson); render(); };
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    try {
+      const response = await fetch("/api/blocks");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (!data.active || !Array.isArray(data.active.phases) || !data.active.phases.length) return fallback();
+      STATE.trainingBlock = data.active;
+      render();
+    } catch {
+      fallback();
+    }
+  }
+
+  function openBlockModal() {
+    const dialog = $("#block-modal");
+    $("#block-start").value = localIso();
+    $("#block-form-status").textContent = "";
+    dialog.showModal();
+  }
+
+  function closeBlockModal() {
+    const dialog = $("#block-modal");
+    if (dialog.open) dialog.close();
+  }
+
+  async function wireGoals(root) {
+    const current = JSON.parse(bodyModeStaticJson);
+    const render = () => {
+      root.innerHTML = S.goals().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("health", "goals")}`);
+    };
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    const fetchJson = async (path) => {
+      try {
+        const response = await fetch(path);
+        if (!response.ok) return null;
+        return await response.json();
+      } catch {
+        return null;
+      }
+    };
+    const [goalsData, modeData, statsData] = await Promise.all([
+      fetchJson("/api/goals"),
+      fetchJson("/api/body-mode"),
+      fetchJson("/api/stats"),
+    ]);
+
+    if (modeData && Array.isArray(modeData.modes) && modeData.modes.some((item) => item.key === modeData.mode)) {
+      current.mode = modeData.mode;
+      current.modes = modeData.modes;
+      current.weekIndex = modeData.weekIndex ?? current.weekIndex;
+      current.weekCount = modeData.weekCount ?? current.weekCount;
+      current.descriptor = modeData.descriptor ?? current.descriptor;
+      current.bias = modeData.bias ?? current.bias;
+    }
+
+    const targets = Object.fromEntries(current.weeklyTargets.map((target) => [target.label, target]));
+    const targetByGoal = {
+      weekly_active_days: targets["Active days"],
+      weekly_strength_sessions: targets.Strength,
+      weekly_cardio_distance: targets.Cardio,
+    };
+    for (const goal of goalsData?.goals || []) {
+      if (goal.enabled && goal.target_value != null && targetByGoal[goal.key]) {
+        targetByGoal[goal.key].target = goal.target_value;
+      }
+    }
+
+    if (Array.isArray(statsData?.days) && statsData.days.length) {
+      const weekStart = currentWeekStartIso();
+      const today = localIso();
+      const week = statsData.days.filter((day) => day.date >= weekStart && day.date <= today);
+      targetByGoal.weekly_active_days.value = week.filter((day) => day.strength || day.cardio).length;
+      targetByGoal.weekly_strength_sessions.value = week.filter((day) => day.strength).length;
+      targetByGoal.weekly_cardio_distance.value = Math.round(
+        week.reduce((total, day) => total + (day.cardio?.km || 0), 0) * 10,
+      ) / 10;
+    }
+
+    if (Array.isArray(statsData?.body) && statsData.body.length) {
+      const mapTrend = (key, unit, digits, fallback) => {
+        const points = statsData.body.map((row) => row[key]).filter((value) => value != null).slice(-7);
+        if (!points.length) return fallback;
+        const latest = points.at(-1);
+        const delta = latest - points[0];
+        const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+        return {
+          ...fallback,
+          value: `${latest.toFixed(digits)} ${unit}`,
+          delta: `${sign}${Math.abs(delta).toFixed(digits)} ${unit === "%" ? "pt" : unit}`,
+          trend: points,
+        };
+      };
+      current.weight = mapTrend("weight_kg", "kg", 1, current.weight);
+      current.bodyFat = mapTrend("fat_ratio_pct", "%", 1, current.bodyFat);
+    }
+    STATE.bodyMode = current;
+    render();
+  }
+
+  async function wireMemory(root) {
+    const render = () => {
+      root.innerHTML = S.memory().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("settings", "memory")}`);
+    };
+    const fallback = () => {
+      STATE.coachMemory = JSON.parse(memoryStaticJson);
+      memoryIds = {};
+      render();
+    };
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    try {
+      const response = await fetch("/api/memories");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const groups = data.groups || {};
+      const current = JSON.parse(memoryStaticJson);
+      memoryIds = {};
+      for (const category of ["injuries", "schedule", "equipment", "prefers", "dislikes"]) {
+        const rows = Array.isArray(groups[category]) ? groups[category] : [];
+        current[category] = rows.map((row) => row.content);
+        memoryIds[category] = rows.map((row) => row.id);
+      }
+      STATE.coachMemory = current;
+      render();
+    } catch {
+      fallback();
+    }
+  }
+
+  async function removeMemory(btn) {
+    const id = memoryIds[btn.dataset.category]?.[+btn.dataset.idx];
+    if (id == null) return toast("Could not remove this memory");
+    try {
+      const response = await fetch(`/api/memories/${id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      nav("memory");
+    } catch {
+      toast("Could not remove memory");
+    }
+  }
+
+  async function wireToday(root) {
+    const fallback = () => {
+      STATE.today = JSON.parse(todayStaticJson);
+      root.innerHTML = S.today();
+    };
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    try {
+      const [response, rulesResponse] = await Promise.all([
+        fetch("/api/health"),
+        fetch("/api/rules").catch(() => null),
+      ]);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const health = (data.days || []).at(-1);
+      if (!health) return fallback();
+
+      const current = JSON.parse(todayStaticJson);
+      let ruleWarning = current.warning;
+      if (rulesResponse?.ok) {
+        const rulesData = await rulesResponse.json();
+        if (rulesData.warning) ruleWarning = rulesData.warning;
+      }
+      const sleepMinutes = health.sleep_hours == null ? null : Math.round(health.sleep_hours * 60);
+      const sleepBand = health.sleep_score >= 80 ? "good" : health.sleep_score >= 60 ? "fair" : "low";
+      const restingDiff = health.resting_hr == null
+        ? current.restingHr.meta
+        : health.resting_hr_7d_avg == null
+          ? ""
+          : `${health.resting_hr - health.resting_hr_7d_avg > 0 ? "+" : health.resting_hr - health.resting_hr_7d_avg < 0 ? "−" : ""}${Math.abs(health.resting_hr - health.resting_hr_7d_avg)} vs base`;
+
+      STATE.today = {
+        ...current,
+        readiness: health.training_readiness ?? current.readiness,
+        verdict: health.training_readiness == null
+          ? current.verdict
+          : health.training_readiness >= 66 ? "TRAIN" : health.training_readiness >= 40 ? "EASY" : "REST",
+        sleep: {
+          value: sleepMinutes == null ? current.sleep.value : `${Math.floor(sleepMinutes / 60)}h ${sleepMinutes % 60}m`,
+          meta: health.sleep_score == null ? current.sleep.meta : `Score ${health.sleep_score} · ${sleepBand}`,
+        },
+        hrv: {
+          value: health.hrv == null ? current.hrv.value : `${health.hrv} ms`,
+          meta: health.hrv_status == null ? current.hrv.meta : `${health.hrv_status} · 7-day`,
+        },
+        bodyBattery: {
+          value: health.body_battery_high == null ? current.bodyBattery.value : String(health.body_battery_high),
+          meta: "Charged",
+        },
+        restingHr: {
+          value: health.resting_hr == null ? current.restingHr.value : `${health.resting_hr} bpm`,
+          meta: restingDiff,
+        },
+        acwr: health.acwr ?? current.acwr,
+        acwrPct: health.acwr == null ? current.acwrPct : Math.max(0, Math.min(100, Math.round(health.acwr / 2 * 100))),
+        warning: ruleWarning,
+      };
+      root.innerHTML = S.today();
+    } catch {
+      fallback();
+    }
+  }
+
+  function localIso(day = new Date()) {
+    const year = day.getFullYear();
+    const month = String(day.getMonth() + 1).padStart(2, "0");
+    const date = String(day.getDate()).padStart(2, "0");
+    return `${year}-${month}-${date}`;
+  }
+
+  function currentWeekStartIso() {
+    const day = new Date();
+    day.setHours(12, 0, 0, 0);
+    day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
+    return localIso(day);
+  }
+
+  function planDate(value) { return new Date(`${value}T12:00:00`); }
+  function shortDate(value) { return planDate(value).toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+  function longDate(value) { return planDate(value).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }); }
+
+  function planExercises(day) {
+    const payload = day.payload_json || {};
+    if (day.kind === "strength") return (payload.exercises || []).map((item) => typeof item === "string" ? item : item.name).filter(Boolean);
+    if (day.kind === "cardio") {
+      const bits = [payload.zone, payload.distance_km == null ? null : `${payload.distance_km} km`, payload.duration_minutes == null ? null : `${payload.duration_minutes} min`];
+      return [bits.filter(Boolean).join(" · ") || "Cardio"];
+    }
+    return [];
+  }
+
+  function mapWeeklyPlan(data) {
+    const rows = data.days;
+    const strength = rows.filter((day) => day.kind === "strength").length;
+    const cardio = rows.filter((day) => day.kind === "cardio").length;
+    const rest = rows.filter((day) => day.kind === "rest").length;
+    const statusMap = {
+      planned: ["PLANNED", "planned", "blue"],
+      ready_in_hevy: ["READY IN HEVY", "ready", "green"],
+      scheduled: ["SCHEDULED", "ready", "green"],
+      done: ["COMPLETED", "completed", "green"],
+      missed: ["MISSED", "missed", "orange"],
+      replaced: ["REPLACED", "replaced", "amber"],
+    };
+    const start = rows[0].date, end = rows.at(-1).date;
+    return {
+      weekStart: data.week_start,
+      header: "WEEKLY PLAN",
+      range: `${shortDate(start)} – ${shortDate(end)}`,
+      summary: `${rows.length - rest} active days · ${strength} strength · ${cardio} cardio · ${rest} rest`,
+      tiles: [
+        { value: String(rows.length - rest), label: "Active days" },
+        { value: String(strength), label: "Strength" },
+        { value: String(cardio), label: "Cardio" },
+      ],
+      days: rows.map((day) => {
+        const [status, statusKind, dot] = day.kind === "rest" ? ["REST DAY", "rest", "violet"] : (statusMap[day.status] || statusMap.planned);
+        return {
+          date: day.date,
+          day: day.weekday.slice(0, 3),
+          name: day.title,
+          accent: day.kind,
+          exercises: planExercises(day),
+          delivery: day.kind === "rest" ? "" : day.delivery,
+          deliveryColor: day.status === "missed" ? "orange" : day.status === "replaced" ? "amber" : "green",
+          status,
+          statusKind,
+          dot,
+          rest: day.kind === "rest",
+          today: day.date === localIso(),
+          garminWorkoutId: day.garmin_workout_id,
+        };
+      }),
+    };
+  }
+
+  async function wirePlan(root) {
+    const render = () => {
+      root.innerHTML = S.plan().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("plan", "plan")}`);
+    };
+    const fallback = () => { STATE.weekPlan = JSON.parse(weekPlanStaticJson); render(); };
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    try {
+      const response = await fetch("/api/plan?week=current");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (!Array.isArray(data.days) || !data.days.length) return fallback();
+      STATE.weekPlan = mapWeeklyPlan(data);
+      render();
+    } catch {
+      fallback();
+    }
+  }
+
+  function mapBuilder(day) {
+    const payload = day.payload_json || {};
+    const exercises = (payload.exercises || []).map((exercise, exerciseIndex) => ({
+      name: exercise.name,
+      scheme: exercise.scheme,
+      expanded: exercise.expanded ?? exerciseIndex < 2,
+      sets: (exercise.sets || []).map((item, setIndex) => ({
+        set: item.set || String(setIndex + 1),
+        weight: item.weight_kg ?? "—",
+        reps: item.reps ?? "—",
+        rpe: item.rpe ?? "—",
+        kind: item.type === "warmup" ? "warm" : "work",
+      })),
+      progression: exercise.progression || null,
+      alternatives: exercise.alternatives || "",
+    }));
+    const workingSets = exercises.reduce((total, exercise) => total + exercise.sets.filter((item) => item.kind === "work").length, 0);
+    const targets = Array.isArray(payload.targets) && payload.targets.length
+      ? payload.targets
+      : [
+          { label: "Working sets", value: String(workingSets) },
+          { label: "Duration", value: payload.duration_minutes ? `${payload.duration_minutes} min` : "—" },
+        ];
+    return {
+      live: true,
+      planDate: day.date,
+      hevyRoutineId: day.hevy_routine_id,
+      title: day.title,
+      crumb: ["Plan", longDate(day.date), day.title],
+      synced: day.hevy_routine_id ? "ready" : "not pushed yet",
+      summary: `${exercises.length} exercises${payload.duration_minutes ? ` · ~${payload.duration_minutes} min` : ""}`,
+      exercises,
+      notes: payload.notes || "",
+      targets: targets.map((target) => ({ label: target.label, value: String(target.value) })),
+    };
+  }
+
+  async function wireBuilder(root) {
+    const render = () => {
+      root.innerHTML = S.builder().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("plan", "builder")}`);
+    };
+    const fallback = () => { STATE.builder = JSON.parse(builderStaticJson); render(); };
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    try {
+      const planResponse = await fetch("/api/plan?week=current");
+      if (!planResponse.ok) throw new Error(`HTTP ${planResponse.status}`);
+      const planData = await planResponse.json();
+      const strength = (planData.days || []).filter((day) => day.kind === "strength");
+      const selected = strength.find((day) => day.date === localIso())
+        || strength.find((day) => day.date > localIso())
+        || strength[0];
+      if (!selected) return fallback();
+      const response = await fetch(`/api/plan/day/${encodeURIComponent(selected.date)}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      STATE.builder = mapBuilder(await response.json());
+      render();
+    } catch {
+      fallback();
+    }
+  }
+
+  async function openHevy() {
+    const builder = STATE.builder;
+    if (!builder.live || !builder.planDate) return openExternal("https://hevy.com/", "Opening Hevy…");
+    toast(builder.hevyRoutineId ? "Updating Hevy routine…" : "Pushing to Hevy…");
+    try {
+      const response = await fetch(`/api/plan/day/${encodeURIComponent(builder.planDate)}/push-hevy`, { method: "POST" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const day = await response.json();
+      if (!day.hevy_routine_id) throw new Error("Missing routine id");
+      STATE.builder.hevyRoutineId = day.hevy_routine_id;
+      STATE.builder.synced = "ready";
+      openExternal(`https://hevy.com/routine/${encodeURIComponent(day.hevy_routine_id)}`, "Opening Hevy…");
+      nav("builder");
+    } catch {
+      toast("Could not push routine to Hevy");
+    }
+  }
+
+  async function scheduleGarmin(btn) {
+    const calendarUrl = "https://connect.garmin.com/modern/calendar";
+    if (btn.dataset.scheduled === "true") {
+      return openExternal(calendarUrl, "Opening Garmin Connect…");
+    }
+    toast("Scheduling in Garmin…");
+    try {
+      const response = await fetch(
+        `/api/plan/day/${encodeURIComponent(btn.dataset.date)}/schedule-garmin`,
+        { method: "POST" },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      toast("Scheduled in Garmin");
+      nav("plan");
+    } catch {
+      toast("Could not schedule — opening Garmin Connect…");
+      window.open(calendarUrl, "_blank", "noopener");
+    }
+  }
+
+  function actualText(day) {
+    const parts = [];
+    if (day.strength) parts.push(`Strength · ${day.strength.minutes || 0} min`);
+    if (day.cardio) parts.push(`${day.cardio.type || "Cardio"} · ${day.cardio.km || 0} km · ${day.cardio.minutes || 0} min`);
+    return parts.join(" + ") || "No session";
+  }
+
+  function plannedText(day) {
+    const detail = planExercises(day)[0];
+    return detail ? `${day.title} · ${detail}` : day.title;
+  }
+
+  function mapPlanVsActual(planData, statsData) {
+    const actualByDate = Object.fromEntries((statsData.days || []).map((day) => [day.date, day]));
+    const today = localIso();
+    const details = {};
+    const eligible = [];
+    const calendarDays = planData.days.map((day) => {
+      const actual = actualByDate[day.date] || { strength: null, cardio: null };
+      const hasActual = Boolean(actual.strength || actual.cardio);
+      const matching = day.kind !== "rest" && Boolean(actual[day.kind]);
+      let status;
+      if (day.kind === "rest") status = hasActual ? "REPLACED" : day.date <= today ? "ON PLAN" : "PLANNED";
+      else if (matching) status = "ON PLAN";
+      else if (hasActual) status = "REPLACED";
+      else status = day.date < today ? "MISSED" : "PLANNED";
+      if (day.kind !== "rest" && day.date <= today) eligible.push(status);
+
+      const color = { "ON PLAN": "#46c98b", MISSED: "#ff6b4a", REPLACED: "#e0a23b", PLANNED: "#4f8cff" }[status];
+      const diff = { "ON PLAN": "Completed as planned.", MISSED: "No matching session synced.", REPLACED: "A different session was synced.", PLANNED: "Session is still planned." }[status];
+      const impact = { "ON PLAN": "Plan and completed work are aligned.", MISSED: "The next re-plan can account for the missed work.", REPLACED: "The next re-plan can account for the changed load.", PLANNED: "No recovery impact yet." }[status];
+      details[day.date] = {
+        date: longDate(day.date),
+        day: planDate(day.date).getDate(),
+        planned: plannedText(day),
+        actual: actualText(actual),
+        ac: color,
+        diff,
+        impact,
+        status,
+        color,
+      };
+      return {
+        key: day.date,
+        n: planDate(day.date).getDate(),
+        nm: day.title,
+        s: { "ON PLAN": "green", MISSED: "orange", REPLACED: "amber", PLANNED: "blue" }[status],
+        tag: day.date === today ? "today" : status === "MISSED" ? "missed" : status === "REPLACED" ? "replaced" : "",
+      };
+    });
+    const start = planData.days[0].date, end = planData.days.at(-1).date;
+    return {
+      adherence: eligible.length ? Math.round(eligible.filter((status) => status === "ON PLAN").length / eligible.length * 100) : 0,
+      selectedDay: details[today] ? today : planData.days[0].date,
+      monthLabel: `${shortDate(start)} – ${shortDate(end)}, ${planDate(end).getFullYear()}`,
+      weeks: [calendarDays],
+      days: details,
+    };
+  }
+
+  function bindActual(root) {
+    const fill = (n) => root.querySelectorAll("[data-pa-detail]").forEach((panel) => { panel.innerHTML = S.paDetailHtml(n); });
     fill(STATE.planVsActual.selectedDay);
     root.querySelectorAll("[data-day]").forEach((cell) => {
-      if (+cell.dataset.day === STATE.planVsActual.selectedDay && cell.classList.contains("calcell") && !cell.classList.contains("today")) {
+      if (cell.dataset.day === String(STATE.planVsActual.selectedDay) && cell.classList.contains("calcell") && !cell.classList.contains("today")) {
         cell.style.outline = "2px solid #eef1f6"; cell.style.outlineOffset = "2px";
       }
     });
@@ -134,9 +774,52 @@
       const grid = cell.closest("[data-cal-grid]");
       if (grid) grid.querySelectorAll("[data-day]").forEach((c) => { c.style.outline = "none"; c.style.outlineOffset = "0"; });
       cell.style.outline = "2px solid #eef1f6"; cell.style.outlineOffset = "2px";
-      STATE.planVsActual.selectedDay = +cell.dataset.day;
-      fill(+cell.dataset.day);
+      STATE.planVsActual.selectedDay = cell.dataset.day;
+      fill(cell.dataset.day);
     });
+  }
+
+  async function wireActual(root) {
+    const render = () => { root.innerHTML = S.actual(); bindActual(root); };
+    const fallback = () => { STATE.planVsActual = JSON.parse(actualStaticJson); render(); };
+    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    try {
+      const planResponse = await fetch("/api/plan?week=current");
+      if (!planResponse.ok) throw new Error(`HTTP ${planResponse.status}`);
+      const planData = await planResponse.json();
+      if (!Array.isArray(planData.days) || !planData.days.length) return fallback();
+      const end = planData.days.at(-1).date;
+      const statsResponse = await fetch(`/api/stats?start=${encodeURIComponent(planData.week_start)}&end=${encodeURIComponent(end)}`);
+      if (!statsResponse.ok) throw new Error(`HTTP ${statsResponse.status}`);
+      STATE.planVsActual = mapPlanVsActual(planData, await statsResponse.json());
+      render();
+    } catch {
+      fallback();
+    }
+  }
+
+  async function updatePlan(path, body, pending) {
+    toast(pending);
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      toast("Plan updated");
+      nav("plan");
+    } catch {
+      toast("Could not update plan");
+    }
+  }
+
+  function regenerateWeek() {
+    return updatePlan("/api/plan/generate", { week_start: STATE.weekPlan.weekStart || currentWeekStartIso() }, "Regenerating week…");
+  }
+
+  function replanToday() {
+    return updatePlan("/api/plan/replan", { from_date: localIso() }, "Re-planning from today…");
   }
 
   // ----- external links (deep-link targets; confirm-free, just opens a tab)
@@ -250,5 +933,82 @@
   }
 
   // boot
+  const blockForm = $("#block-form");
+  if (blockForm) blockForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('button[type="submit"]');
+    const status = $("#block-form-status");
+    submit.disabled = true;
+    status.textContent = "Creating block…";
+    try {
+      const response = await fetch("/api/blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.elements.name.value.trim(),
+          goal: form.elements.goal.value,
+          start_date: form.elements.start_date.value,
+          weeks: Number(form.elements.weeks.value),
+          include_deload: form.elements.include_deload.checked,
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      closeBlockModal();
+      form.reset();
+      nav("blocks");
+    } catch {
+      status.textContent = "Could not create block.";
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  const ruleMetric = $("#rule-metric");
+  const syncRuleCondition = () => {
+    if (!ruleMetric) return;
+    const disabled = !ruleMetric?.value;
+    $("#rule-operator").disabled = disabled;
+    $("#rule-value").disabled = disabled;
+    $("#rule-value").required = !disabled;
+  };
+  if (ruleMetric) {
+    ruleMetric.addEventListener("change", syncRuleCondition);
+    syncRuleCondition();
+  }
+  const ruleForm = $("#rule-form");
+  if (ruleForm) ruleForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('button[type="submit"]');
+    const status = $("#rule-form-status");
+    const metric = form.elements.metric.value;
+    submit.disabled = true;
+    status.textContent = "Creating rule…";
+    try {
+      const response = await fetch("/api/rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: form.elements.label.value.trim(),
+          description: form.elements.description.value.trim(),
+          condition: metric ? {
+            metric,
+            op: form.elements.operator.value,
+            value: Number(form.elements.value.value),
+          } : null,
+          action: form.elements.action.value,
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      closeRuleModal();
+      form.reset();
+      syncRuleCondition();
+      nav("rules");
+    } catch {
+      status.textContent = "Could not create rule.";
+    } finally {
+      submit.disabled = false;
+    }
+  });
   renderAppbar(); renderTabbar(); nav("today");
 })();

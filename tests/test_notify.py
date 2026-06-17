@@ -27,6 +27,15 @@ class MockWebPushException(Exception):
 
 
 class TestNotification(unittest.TestCase):
+    def setUp(self):
+        self.preference_patch = patch(
+            "coach.notify.notification_prefs.is_enabled", return_value=False
+        )
+        self.preference_enabled = self.preference_patch.start()
+
+    def tearDown(self):
+        self.preference_patch.stop()
+
     @patch("coach.notify.settings")
     def test_email_configured(self, mock_settings):
         # All set
@@ -332,3 +341,27 @@ class TestNotification(unittest.TestCase):
         mock_send_web_push.assert_called_once_with("Subject", "Body")
 
         self.assertEqual(channels, [])
+
+    @patch("coach.notify.send_email")
+    @patch("coach.notify.email_configured", return_value=True)
+    def test_preference_can_suppress_delivery(self, mock_configured, mock_send_email):
+        self.preference_enabled.return_value = False
+
+        channels = send("Weekly", "Body", preference_key="weeklyReview")
+
+        self.assertEqual([], channels)
+        mock_send_email.assert_not_called()
+
+    @patch("coach.notify.send_email")
+    @patch("coach.notify.email_configured", return_value=True)
+    @patch("coach.notify._quiet_hours_active", return_value=True)
+    def test_quiet_hours_suppress_only_non_urgent_delivery(
+        self, mock_quiet, mock_configured, mock_send_email
+    ):
+        self.preference_enabled.side_effect = lambda key: key == "quietHours"
+
+        self.assertEqual([], send("Routine", "Body"))
+        mock_send_email.assert_not_called()
+        send("Urgent", "Body", urgent=True)
+
+        mock_send_email.assert_called_once_with("Urgent", "Body")

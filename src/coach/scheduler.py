@@ -158,4 +158,8 @@ def build_scheduler() -> AsyncIOScheduler:
     sched.add_job(
         _review_job, CronTrigger(day_of_week="sun", hour=18, minute=0, timezone=tz), id="weekly"
     )
+    # TODO(Step 3 follow-up): dailyPlan and planDrift producers should call
+    # notify.send(..., preference_key=<key>) once plan/drift events are defined.
+    # TODO(Step 6 follow-up): a rules-triggered recoveryAlerts producer should call
+    # notify.send(..., preference_key="recoveryAlerts", urgent=True).
     return sched

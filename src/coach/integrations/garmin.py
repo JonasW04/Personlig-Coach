@@ -29,6 +29,14 @@ from garminconnect import (
     GarminConnectAuthenticationError,
     GarminConnectTooManyRequestsError,
 )
+from garminconnect.workout import (
+    CyclingWorkout,
+    FitnessEquipmentWorkout,
+    RunningWorkout,
+    WalkingWorkout,
+    WorkoutSegment,
+    create_interval_step,
+)
 
 from coach.config import settings
 from coach.db import SessionLocal
@@ -40,6 +48,15 @@ PROVIDER = "garmin"
 DEFAULT_SYNC_DAYS = 10
 # Be a polite client of an unofficial API: small gap between per-day fetches.
 _REQUEST_PAUSE_S = 0.4
+CARDIO_TYPES = {"running", "cycling", "walking", "cardio"}
+
+
+class GarminWorkoutPayloadError(ValueError):
+    pass
+
+
+class GarminWorkoutRequestError(RuntimeError):
+    pass
 
 
 # --------------------------------------------------------------------------- tokens
@@ -340,3 +357,80 @@ def sync(days: int = DEFAULT_SYNC_DAYS) -> int:
         log.debug("could not persist refreshed garmin token", exc_info=True)
 
     return stored
+
+
+# -------------------------------------------------------------------- workout push
+def _cardio_workout(title: str, payload: dict):
+    cardio_type = payload.get("cardio_type") or "cardio"
+    if cardio_type not in CARDIO_TYPES:
+        raise GarminWorkoutPayloadError(f"Unsupported cardio type: {cardio_type}")
+    duration = payload.get("duration_minutes")
+    try:
+        duration_seconds = int(round(float(duration) * 60))
+    except (TypeError, ValueError) as exc:
+        raise GarminWorkoutPayloadError(
+            "Cardio sessions need duration_minutes before Garmin scheduling"
+        ) from exc
+    if duration_seconds <= 0:
+        raise GarminWorkoutPayloadError(
+            "Cardio sessions need duration_minutes before Garmin scheduling"
+        )
+
+    workout_class, sport_type = {
+        "running": (RunningWorkout, {"sportTypeId": 1, "sportTypeKey": "running"}),
+        "cycling": (CyclingWorkout, {"sportTypeId": 2, "sportTypeKey": "cycling"}),
+        "walking": (WalkingWorkout, {"sportTypeId": 17, "sportTypeKey": "walking"}),
+        "cardio": (
+            FitnessEquipmentWorkout,
+            {"sportTypeId": 6, "sportTypeKey": "cardio_training"},
+        ),
+    }[cardio_type]
+    details = [payload.get("zone")]
+    if payload.get("distance_km") is not None:
+        details.append(f'{payload["distance_km"]} km')
+    if payload.get("notes"):
+        details.append(payload["notes"])
+    return workout_class(
+        workoutName=title,
+        estimatedDurationInSecs=duration_seconds,
+        description=" · ".join(str(item) for item in details if item),
+        workoutSegments=[
+            WorkoutSegment(
+                segmentOrder=1,
+                sportType=sport_type,
+                workoutSteps=[create_interval_step(duration_seconds, step_order=1)],
+            )
+        ],
+    )
+
+
+def schedule_cardio_workout(title: str, payload: dict, workout_date: date) -> str:
+    """Upload a typed cardio workout and schedule it on Garmin Connect."""
+    workout = _cardio_workout(title, payload)
+    cardio_type = payload.get("cardio_type") or "cardio"
+    client = _client_from_token()
+    try:
+        if cardio_type == "running":
+            uploaded = client.upload_running_workout(workout)
+        elif cardio_type == "cycling":
+            uploaded = client.upload_cycling_workout(workout)
+        elif cardio_type == "walking":
+            uploaded = client.upload_walking_workout(workout)
+        else:
+            uploaded = client.upload_workout(workout.to_dict())
+        workout_id = uploaded.get("workoutId") if isinstance(uploaded, dict) else None
+        if workout_id is None:
+            raise GarminWorkoutRequestError("Garmin did not return a workout id")
+        client.schedule_workout(workout_id, workout_date.isoformat())
+    except GarminConnectAuthenticationError:
+        raise
+    except GarminWorkoutRequestError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - unofficial API errors vary by version
+        raise GarminWorkoutRequestError("Garmin workout scheduling failed") from exc
+
+    try:
+        save_token(_dump_token(client))
+    except Exception:  # noqa: BLE001 - scheduling succeeded; refresh is best-effort
+        log.debug("could not persist refreshed garmin token", exc_info=True)
+    return str(workout_id)
