@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Enable on the always-on web service in production.
     run_scheduler: bool = False
     scheduler_timezone: str = "UTC"
+    readiness_start_hour: int = 6
+    readiness_cutoff_hour: int = 12
+    readiness_poll_minutes: int = 30
+    readiness_garmin_sync_days: int = 2
 
     @field_validator("database_url")
     @classmethod

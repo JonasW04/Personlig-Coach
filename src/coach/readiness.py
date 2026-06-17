@@ -2,8 +2,8 @@
 
 A light morning brief on the last few days of training and body data: whether
 to train today and what to prioritize. Persisted to the DB and sent to notify channels.
-Schedule daily on the VPS after the nightly sync, e.g. 06:00:
-    0 6 * * * cd /opt/coach && .venv/bin/coach-readiness >> /var/log/coach-readiness.log 2>&1
+For the sleep-aware morning schedule, use RUN_SCHEDULER=true in the web service.
+This CLI command generates immediately.
 """
 from __future__ import annotations
 
