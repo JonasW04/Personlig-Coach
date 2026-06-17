@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "coach-static",
+      "runtimeExecutable": "/opt/homebrew/bin/python3.12",
+      "runtimeArgs": ["-m", "http.server", "4178", "--directory", "/Users/jonaswiger/Desktop/Coach/src/coach/web/static"],
+      "port": 4178
+    }
+  ]
+}
