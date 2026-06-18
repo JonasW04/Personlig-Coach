@@ -123,6 +123,7 @@ window.SCREENS = (() => {
          <button class="btn btn-outline" data-action="replan-today">Re-plan from today</button>`)}
       <div class="muted" style="margin:-6px 0 4px;font-weight:700">${esc(p.range)}</div>
       <div class="muted" style="font-size:12px;margin-bottom:16px">${esc(p.summary)}</div>
+      <div id="plan-status" class="gen-status"></div>
       <div class="grid3 mobile-only" style="margin-bottom:14px">${tiles}</div>
       <div class="weekgrid desktop-only">${p.days.map(dayCard).join("")}</div>
       <div class="weeklist mobile-only">${p.days.map(dayCard).join("")}</div>

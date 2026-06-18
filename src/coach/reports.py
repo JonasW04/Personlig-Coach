@@ -23,6 +23,14 @@ from coach.models import ActionItem, Report
 
 log = logging.getLogger("coach.reports")
 
+
+class ReportGenerationError(RuntimeError):
+    """Raised when the model is unavailable or returns nothing usable.
+
+    Lets the web layer map a transient upstream failure (e.g. the model is
+    busy / 503) to a clean error instead of leaking a raw 500.
+    """
+
 READINESS_PROMPT = """Give me today's readiness check. This is a training brief — the point is to
 tell me WHAT TO TRAIN TODAY. Keep it short and decisive.
 
@@ -120,7 +128,13 @@ _SPECS = {
 async def generate(kind: str) -> str:
     """Run the coordinator and return the report text. Does not persist or notify."""
     prompt, model, _ = _SPECS[kind]
-    return await run_once(prompt, model=model)
+    try:
+        return await run_once(prompt, model=model)
+    except Exception as exc:  # noqa: BLE001 - surface a clean, retryable error
+        raise ReportGenerationError(
+            "Coach couldn't generate the report — the model may be busy. "
+            "Try again in a moment."
+        ) from exc
 
 
 def save_report(kind: str, content: str) -> Report:

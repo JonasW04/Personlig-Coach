@@ -102,6 +102,8 @@
       case "schedule-garmin": return scheduleGarmin(t);
       case "copy-workout": return copyWorkout();
       case "sync": return runSync();
+      case "rev-kind": reviewKind = t.dataset.kind; return nav("reviews");
+      case "rev-generate": return generateReview();
       case "replan-today": return replanToday();
       case "regenerate-week": return regenerateWeek();
       case "new-block": return openBlockModal();
@@ -798,20 +800,17 @@
     }
   }
 
-  async function updatePlan(path, body, pending) {
-    toast(pending);
-    try {
-      const response = await fetch(path, {
+  function updatePlan(path, body, pending) {
+    return runGeneration({
+      statusId: "plan-status",
+      working: pending,
+      run: () => fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      toast("Plan updated");
-      nav("plan");
-    } catch {
-      toast("Could not update plan");
-    }
+      }),
+      onDone: () => nav("plan"),
+    });
   }
 
   function regenerateWeek() {
@@ -850,6 +849,45 @@
     clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), 1900);
   }
 
+  // ----- LLM generation feedback (shared by reviews + plan generate buttons)
+  // One model call at a time: it's the same rate-limited backend, and a single
+  // busy flag prevents the duplicate-request storms we used to see.
+  let genBusy = false;
+  async function runGeneration({ statusId, working, run, onDone }) {
+    if (genBusy) { toast("Already working — hang tight"); return; }
+    genBusy = true;
+    const started = Date.now();
+    const status = statusId ? document.getElementById(statusId) : null;
+    let tick;
+    const paint = (cls, html) => { if (status) { status.className = "gen-status " + cls; status.innerHTML = html; } };
+    if (status) {
+      paint("is-busy", `<span class="spinner"></span><span>${esc(working)} <b id="gen-elapsed">0s</b></span>`);
+      tick = setInterval(() => { const e = document.getElementById("gen-elapsed"); if (e) e.textContent = Math.round((Date.now() - started) / 1000) + "s"; }, 1000);
+    } else {
+      toast(working);
+    }
+    try {
+      const r = await run();
+      if (r.status === 202) { paint("is-busy", `<span class="spinner"></span><span>Already generating — hang tight…</span>`); toast("Already running"); return; }
+      if (!r.ok) {
+        let msg = "Generation failed. Please try again.";
+        try { const j = await r.json(); if (j && j.detail) msg = j.detail; } catch {}
+        paint("is-error", `<span>⚠ ${esc(msg)}</span>`);
+        toast("Generation failed");
+        return;
+      }
+      paint("is-ok", `<span>✓ Done</span>`);
+      toast("Done");
+      if (onDone) onDone();
+    } catch {
+      paint("is-error", `<span>⚠ Network error — check your connection and try again.</span>`);
+      toast("Generation failed");
+    } finally {
+      clearInterval(tick);
+      genBusy = false;
+    }
+  }
+
   // ----- Reviews (live /api/reports + generate)
   let reviewKind = "readiness";
   function renderReviews() {
@@ -859,21 +897,22 @@
         <button class="${reviewKind === "readiness" ? "active" : ""}" data-action="rev-kind" data-kind="readiness">Daily readiness</button>
         <button class="${reviewKind === "weekly" ? "active" : ""}" data-action="rev-kind" data-kind="weekly">Weekly review</button>
       </div>
-      <div class="row" style="margin-bottom:14px"><button class="btn btn-primary" data-action="rev-generate">Generate now</button></div>
+      <div class="row" style="margin-bottom:14px"><button id="rev-generate-btn" class="btn btn-primary" data-action="rev-generate">Generate now</button></div>
+      <div id="reviews-status" class="gen-status"></div>
       <div id="reviews-list" class="stack"><div class="muted">Loading…</div></div>
     </div>`;
   }
+  function generateReview() {
+    const btn = document.getElementById("rev-generate-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "Generating…"; }
+    return runGeneration({
+      statusId: "reviews-status",
+      working: `Generating ${reviewKind === "weekly" ? "weekly review" : "readiness brief"}…`,
+      run: () => fetch("/api/reports/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: reviewKind }) }),
+      onDone: () => nav("reviews"),
+    }).finally(() => { const b = document.getElementById("rev-generate-btn"); if (b) { b.disabled = false; b.textContent = "Generate now"; } });
+  }
   async function loadReviews(root) {
-    root.addEventListener("click", async (e) => {
-      const t = e.target.closest("[data-action]");
-      if (!t) return;
-      if (t.dataset.action === "rev-kind") { reviewKind = t.dataset.kind; nav("reviews"); }
-      if (t.dataset.action === "rev-generate") {
-        toast("Generating…");
-        try { await fetch("/api/reports/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: reviewKind }) }); nav("reviews"); }
-        catch { toast("Generation failed"); }
-      }
-    });
     try {
       const r = await fetch(`/api/reports?kind=${reviewKind}&limit=20`);
       const j = await r.json();

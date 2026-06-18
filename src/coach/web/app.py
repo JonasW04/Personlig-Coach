@@ -1294,7 +1294,10 @@ async def generate_report(req: GenerateRequest) -> dict:
         raise HTTPException(400, "kind must be 'readiness', 'weekly' or 'health'")
     from coach import reports
 
-    report = await reports.generate_and_store(req.kind)
+    try:
+        report = await reports.generate_and_store(req.kind)
+    except reports.ReportGenerationError as exc:
+        raise HTTPException(502, str(exc)) from exc
     return _report_json(report)
 
 

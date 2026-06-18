@@ -113,6 +113,24 @@ class TestPlanEndpoints(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+class TestReportEndpoints(unittest.TestCase):
+    @patch("coach.reports.generate_and_store")
+    def test_generate_maps_model_failure_to_502(self, mock_gen):
+        from coach import reports
+
+        async def _raise(_kind):
+            raise reports.ReportGenerationError("the model may be busy")
+
+        mock_gen.side_effect = _raise
+        resp = _client().post("/api/reports/generate", json={"kind": "readiness"})
+        self.assertEqual(resp.status_code, 502)
+        self.assertIn("busy", resp.json()["detail"].lower())
+
+    def test_generate_invalid_kind_returns_400(self):
+        resp = _client().post("/api/reports/generate", json={"kind": "bogus"})
+        self.assertEqual(resp.status_code, 400)
+
+
 class TestRulesValidation(unittest.TestCase):
     def test_invalid_action_returns_422(self):
         resp = _client().post(
