@@ -102,8 +102,11 @@ def publish_day(planned_date: date) -> PlanDay | None:
         payload = json.loads(day.payload_json or "{}")
         if day.kind == "strength":
             _delete_garmin(day)
+            existing_id = day.hevy_routine_id
+            if not existing_id and day.delivery_status == "failed":
+                existing_id = hevy.find_routine_id_by_title(delivery_title(day))
             routine_id = hevy.push_routine(
-                delivery_title(day), payload, day.hevy_routine_id
+                delivery_title(day), payload, existing_id
             )
             _update(day.date, hevy_routine_id=routine_id)
             day.hevy_routine_id = routine_id

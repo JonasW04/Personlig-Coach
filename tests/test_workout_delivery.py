@@ -107,6 +107,34 @@ class TestWorkoutDelivery(unittest.TestCase):
         self.assertEqual("failed", row.delivery_status)
         self.assertIn("offline", row.delivery_error)
 
+    def test_failed_strength_delivery_adopts_created_routine_before_retry(self):
+        planned_date = self.add_day("strength")
+        with self.sessions() as session:
+            row = session.execute(select(PlanDay)).scalars().one()
+            row.delivery_status = "failed"
+            row.delivery_error = "Hevy response did not include a routine id"
+            session.commit()
+
+        with (
+            patch.object(
+                workout_delivery.hevy,
+                "find_routine_id_by_title",
+                return_value="existing-created-id",
+            ) as find,
+            patch.object(
+                workout_delivery.hevy,
+                "push_routine",
+                return_value="existing-created-id",
+            ) as push,
+        ):
+            workout_delivery.publish_day(planned_date)
+
+        title = "2026-06-19 · Quality session"
+        find.assert_called_once_with(title)
+        push.assert_called_once_with(title, unittest.mock.ANY, "existing-created-id")
+        self.assertEqual("existing-created-id", self.saved().hevy_routine_id)
+        self.assertEqual("delivered", self.saved().delivery_status)
+
 
 if __name__ == "__main__":
     unittest.main()

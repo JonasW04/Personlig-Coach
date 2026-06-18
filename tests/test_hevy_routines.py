@@ -119,6 +119,52 @@ class TestHevyRoutineMapping(unittest.TestCase):
         self.assertEqual(("PUT", "/v1/routines/routine-1"), requests[1][:2])
         self.assertNotIn("folder_id", requests[1][2]["routine"])
 
+    def test_push_recovers_created_routine_when_post_response_omits_id(self):
+        requests = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append((request.method, request.url.path))
+            if request.method == "POST":
+                return httpx.Response(201, json={"status": "success"})
+            return httpx.Response(
+                200,
+                json={
+                    "page": 1,
+                    "page_count": 1,
+                    "routines": [
+                        {
+                            "id": "created-id",
+                            "title": "2026-06-19 · Upper Body",
+                            "created_at": "2026-06-18T16:30:00.830Z",
+                        }
+                    ],
+                },
+            )
+
+        def client():
+            return httpx.Client(
+                base_url=hevy.BASE_URL,
+                transport=httpx.MockTransport(handler),
+            )
+
+        mapped = {
+            "title": "2026-06-19 · Upper Body",
+            "folder_id": None,
+            "notes": "",
+            "exercises": [],
+        }
+        with (
+            patch.object(hevy, "_client", side_effect=client),
+            patch.object(hevy, "build_routine_payload", return_value=mapped),
+        ):
+            routine_id = hevy.push_routine(mapped["title"], strength_payload())
+
+        self.assertEqual("created-id", routine_id)
+        self.assertEqual(
+            [("POST", "/v1/routines"), ("GET", "/v1/routines")],
+            requests,
+        )
+
     def test_push_creates_new_routines_and_updates_existing_ones(self):
         mapped = {"title": "Legs", "folder_id": None, "notes": "", "exercises": []}
         with (

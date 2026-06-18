@@ -175,7 +175,64 @@ def create_routine(payload: dict) -> dict:
     with _client() as client:
         response = client.post("/routines", json={"routine": payload})
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        if _routine_id(result):
+            return result
+
+        location = response.headers.get("location")
+        if location:
+            location_id = location.rstrip("/").rsplit("/", 1)[-1]
+            if location_id and location_id != "routines":
+                return {"id": location_id}
+
+        # Hevy sometimes accepts the routine but omits its id from the 201 body.
+        # Resolve the newly created routine immediately so the delivery is not
+        # marked failed and retried as a duplicate create.
+        created = _find_latest_routine_by_title(client, str(payload.get("title", "")))
+        return created or result
+
+
+def _routine_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidates = [result, result.get("routine"), result.get("data")]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        value = candidate.get("id") or candidate.get("routine_id")
+        if value:
+            return str(value)
+    return None
+
+
+def _find_latest_routine_by_title(client: httpx.Client, title: str) -> dict | None:
+    if not title:
+        return None
+    matches: list[dict] = []
+    page = 1
+    while True:
+        response = client.get("/routines", params={"page": page, "pageSize": 10})
+        response.raise_for_status()
+        data = response.json()
+        matches.extend(
+            routine
+            for routine in data.get("routines", [])
+            if isinstance(routine, dict)
+            and routine.get("id")
+            and routine.get("title") == title
+        )
+        if page >= data.get("page_count", page):
+            break
+        page += 1
+    if not matches:
+        return None
+    return max(matches, key=lambda routine: str(routine.get("created_at", "")))
+
+
+def find_routine_id_by_title(title: str) -> str | None:
+    """Return the newest exact-title routine id without creating anything."""
+    with _client() as client:
+        return _routine_id(_find_latest_routine_by_title(client, title))
 
 
 def update_routine(routine_id: str, payload: dict) -> dict:
@@ -196,11 +253,10 @@ def delete_routine(routine_id: str) -> None:
 def push_routine(title: str, payload: dict, routine_id: str | None = None) -> str:
     routine_payload = build_routine_payload(title, payload)
     result = update_routine(routine_id, routine_payload) if routine_id else create_routine(routine_payload)
-    routine = result.get("routine", result)
-    saved_id = routine.get("id") if isinstance(routine, dict) else None
+    saved_id = _routine_id(result) or routine_id
     if not saved_id:
         raise HevyRoutineError("Hevy response did not include a routine id")
-    return str(saved_id)
+    return saved_id
 
 
 def upsert_workout(session, w: dict) -> None:
