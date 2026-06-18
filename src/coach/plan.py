@@ -82,6 +82,29 @@ class GeneratedDay(BaseModel):
         # the "running|cycling|walking|cardio" placeholder. Normalise to "cardio".
         return value if value in {"running", "cycling", "walking", "cardio"} else "cardio"
 
+    @field_validator("zone", mode="before")
+    @classmethod
+    def _coerce_zone(cls, value):
+        # The model sometimes returns a bare HR-zone number; render it as text.
+        if isinstance(value, bool) or value is None or isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)):
+            return f"Zone {int(value)}"
+        return str(value)
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def _coerce_duration(cls, value):
+        # Rest days often come back as 0; treat sub-minute durations as unset and
+        # clamp the upper bound so an over-long estimate still validates.
+        if value is None:
+            return None
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError):
+            return None
+        return None if minutes < 1 else min(minutes, 300)
+
 
 class GeneratedWeek(BaseModel):
     days: list[GeneratedDay]
