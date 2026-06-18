@@ -26,47 +26,80 @@ window.SCREENS = (() => {
   // ------------------------------------------------------------------- Today
   function today() {
     const t = STATE.today;
-    const verdictColor = { TRAIN: "var(--train)", EASY: "var(--easy)", REST: "var(--rest)" }[t.verdict] || "var(--train)";
+    const verdictColor = { TRAIN: "var(--train)", EASY: "var(--easy)", REST: "var(--rest)" }[t.verdict] || "var(--muted)";
     const signal = (label, value, meta) =>
       `<div class="tile"><p class="label-mono">${esc(label)}</p><div class="big" style="font-size:20px;margin-top:4px">${esc(value)}</div><div class="muted" style="font-size:11.5px">${esc(meta)}</div></div>`;
-    const recent = t.recent.map((r) => `
-      <div class="tile ${r.today ? "" : ""}" style="${r.today ? "border-color:rgba(79,140,255,.5);background:rgba(79,140,255,.06)" : ""}">
+
+    const recentRows = (t.recent || []).map((r) => `
+      <div class="tile" style="${r.today ? "border-color:rgba(79,140,255,.5);background:rgba(79,140,255,.06)" : ""}">
         <div class="between">
           <div><span class="label-mono">${esc(r.day)}</span>
-          <div style="font-weight:700;color:${ACC_LIGHT[r.accent]}">${esc(r.name)}</div>
+          <div style="font-weight:700;color:${ACC_LIGHT[r.accent] || "var(--text)"}">${esc(r.name)}</div>
           <div class="muted" style="font-size:11.5px">${esc(r.meta)}</div></div>
-          ${r.done ? `<span style="color:var(--train)">${I.check(18)}</span>` : pill("blue", "TODAY", true)}
+          ${r.today ? pill("blue", "TODAY", true) : `<span style="color:var(--train)">${I.check(18)}</span>`}
         </div>
       </div>`).join("");
+    const recentBody = t.recent && t.recent.length
+      ? `<div class="stack">${recentRows}</div>`
+      : `<div class="muted" style="font-size:12px">No sessions logged in the last few days.</div>`;
+    const recentCard = `<div class="card"><p class="label-mono" style="margin-bottom:11px">RECENT · LAST 3 DAYS</p>${recentBody}</div>`;
 
     const heroLeft = `
       <div style="display:flex;flex-direction:column;justify-content:center;padding-right:16px">
         <p class="label-mono">READINESS</p>
-        <div class="hero-num" style="color:${verdictColor}">${t.readiness}</div>
-        <div class="label-mono" style="color:${verdictColor};font-size:13px;letter-spacing:0.16em;margin-top:4px">${esc(t.verdict)}</div>
-      </div>`;
-    const heroRight = `
-      <div style="display:flex;flex-direction:column;gap:8px;flex:1;min-width:0">
-        <div class="between"><p class="label-mono">PLANNED · ${esc(t.planned.type)}</p>${pill("green", "READY IN HEVY", true)}</div>
-        <div style="font-size:18px;font-weight:760;letter-spacing:-0.02em">${esc(t.planned.name)}</div>
-        <div class="muted" style="font-size:12px">${esc(t.planned.detail)}</div>
+        <div class="hero-num" style="color:${verdictColor}">${t.readiness == null ? "—" : esc(t.readiness)}</div>
+        <div class="label-mono" style="color:${verdictColor};font-size:13px;letter-spacing:0.16em;margin-top:4px">${esc(t.verdict || "NO DATA")}</div>
       </div>`;
 
-    const heroCard = `
-      <div class="card" style="border-radius:var(--r-hero);padding:18px">
-        <div style="display:flex;align-items:stretch">
-          ${heroLeft}<div class="vrule"></div><div style="padding-left:16px;flex:1;display:flex">${heroRight}</div>
-        </div>
-        <div class="row wrap" style="margin-top:16px">
-          <button class="btn btn-primary" data-action="view-workout">View workout</button>
-          <button class="btn btn-secondary" data-action="open-hevy">Open Hevy</button>
-          <button class="btn btn-outline" data-action="replan-today">Re-plan today</button>
-        </div>
-        <div class="row" style="margin-top:6px">
-          <button class="btn-text" data-action="copy-workout">${I.copy(15)} Copy workout</button>
-          <button class="btn-text" data-action="sync">${I.refresh(15)} Sync latest</button>
-        </div>
-      </div>`;
+    const statusPills = {
+      ready: ["green", t.planned && t.planned.kind === "cardio" ? "SCHEDULED" : "READY IN HEVY"],
+      done: ["green", "COMPLETED"],
+      planned: ["blue", "PLANNED"],
+      rest: ["violet", "REST DAY"],
+    };
+
+    let heroCard;
+    if (!t.planned) {
+      heroCard = `
+        <div class="card" style="border-radius:var(--r-hero);padding:18px">
+          <div style="display:flex;align-items:stretch">
+            ${heroLeft}<div class="vrule"></div>
+            <div style="padding-left:16px;flex:1;display:flex;flex-direction:column;justify-content:center;min-width:0">
+              <p class="label-mono">NO SESSION PLANNED</p>
+              <div style="font-size:16px;font-weight:760;margin-top:4px">Nothing scheduled for today</div>
+              <div class="muted" style="font-size:12px;margin-top:4px">Generate a training plan to see today's workout.</div>
+            </div>
+          </div>
+          <div class="row wrap" style="margin-top:16px">
+            <button class="btn btn-primary" data-action="regenerate-week">Generate week</button>
+            <button class="btn btn-outline" data-action="sync">${I.refresh(15)} Sync latest</button>
+          </div>
+        </div>`;
+    } else {
+      const [pc, pt] = statusPills[t.planned.status] || statusPills.planned;
+      const heroRight = `
+        <div style="display:flex;flex-direction:column;gap:8px;flex:1;min-width:0">
+          <div class="between"><p class="label-mono">PLANNED · ${esc(t.planned.type)}</p>${pill(pc, pt, true)}</div>
+          <div style="font-size:18px;font-weight:760;letter-spacing:-0.02em">${esc(t.planned.name)}</div>
+          <div class="muted" style="font-size:12px">${esc(t.planned.detail)}</div>
+        </div>`;
+      const isStrength = t.planned.kind === "strength";
+      heroCard = `
+        <div class="card" style="border-radius:var(--r-hero);padding:18px">
+          <div style="display:flex;align-items:stretch">
+            ${heroLeft}<div class="vrule"></div><div style="padding-left:16px;flex:1;display:flex">${heroRight}</div>
+          </div>
+          <div class="row wrap" style="margin-top:16px">
+            ${isStrength ? `<button class="btn btn-primary" data-action="view-workout">View workout</button>
+            <button class="btn btn-secondary" data-action="open-hevy">Open Hevy</button>` : ""}
+            <button class="btn btn-outline" data-action="replan-today">Re-plan today</button>
+          </div>
+          <div class="row" style="margin-top:6px">
+            ${isStrength ? `<button class="btn-text" data-action="copy-workout">${I.copy(15)} Copy workout</button>` : ""}
+            <button class="btn-text" data-action="sync">${I.refresh(15)} Sync latest</button>
+          </div>
+        </div>`;
+    }
 
     const signals = `<div class="grid2">
       ${signal("SLEEP", t.sleep.value, t.sleep.meta)}
@@ -75,15 +108,18 @@ window.SCREENS = (() => {
       ${signal("RESTING HR", t.restingHr.value, t.restingHr.meta)}
     </div>`;
 
-    const acwr = `
-      <div class="card">
-        <div class="between"><p class="label-mono">ACWR · ACUTE:CHRONIC LOAD</p><span class="big" style="font-size:20px;color:var(--train)">${t.acwr}</span></div>
-        <div class="gradient-bar" style="margin-top:14px"><div class="marker" style="left:${t.acwrPct}%"></div></div>
-        <div class="between" style="margin-top:8px"><span class="muted" style="font-size:10px">0.8</span><span class="label-mono" style="color:var(--train)">SWEET SPOT</span><span class="muted" style="font-size:10px">1.5</span></div>
-      </div>`;
+    const acwr = t.acwr == null
+      ? `<div class="card">
+          <div class="between"><p class="label-mono">ACWR · ACUTE:CHRONIC LOAD</p><span class="big" style="font-size:20px;color:var(--muted)">—</span></div>
+          <div class="muted" style="font-size:11.5px;margin-top:10px">No training-load data synced yet.</div>
+        </div>`
+      : `<div class="card">
+          <div class="between"><p class="label-mono">ACWR · ACUTE:CHRONIC LOAD</p><span class="big" style="font-size:20px;color:var(--train)">${esc(t.acwr)}</span></div>
+          <div class="gradient-bar" style="margin-top:14px"><div class="marker" style="left:${t.acwrPct}%"></div></div>
+          <div class="between" style="margin-top:8px"><span class="muted" style="font-size:10px">0.8</span><span class="label-mono" style="color:var(--train)">SWEET SPOT</span><span class="muted" style="font-size:10px">1.5</span></div>
+        </div>`;
 
-    const recentCard = `<div class="card"><p class="label-mono" style="margin-bottom:11px">RECENT · LAST 3 DAYS</p><div class="stack">${recent}</div></div>`;
-    const warning = `<div class="warn">${esc(t.warning)}</div>`;
+    const warning = t.warning ? `<div class="warn">${esc(t.warning)}</div>` : "";
 
     return `<div class="screen-inner">
       ${head("Good morning", null, "")}

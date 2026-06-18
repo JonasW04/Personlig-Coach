@@ -466,65 +466,105 @@
     }
   }
 
+  function mapTodayPlanned(day) {
+    if (!day) return null;
+    const payload = day.payload_json || {};
+    if (day.kind === "rest") {
+      return { type: "REST", name: day.title || "Rest day", detail: "Recovery — no training scheduled", status: "rest", kind: "rest" };
+    }
+    if (day.kind === "cardio") {
+      const detail = [payload.zone, payload.distance_km == null ? null : `${payload.distance_km} km`, payload.duration_minutes == null ? null : `${payload.duration_minutes} min`].filter(Boolean).join(" · ") || "Cardio";
+      return { type: "CARDIO", name: day.title, detail, status: day.garmin_workout_id ? "ready" : day.status === "done" ? "done" : "planned", kind: "cardio" };
+    }
+    const count = (payload.exercises || []).length;
+    const detail = [count ? `${count} exercise${count === 1 ? "" : "s"}` : null, payload.duration_minutes == null ? null : `~${payload.duration_minutes} min`].filter(Boolean).join(" · ") || "Strength session";
+    return { type: "STRENGTH", name: day.title, detail, status: day.hevy_routine_id ? "ready" : day.status === "done" ? "done" : "planned", kind: "strength" };
+  }
+
+  function mapRecentSession(entry, todayIso) {
+    let name = "Session", meta = "", accent = "strength";
+    if (entry.strength) {
+      accent = "strength"; name = "Strength";
+      meta = [`${entry.strength.exercises.length} exercise${entry.strength.exercises.length === 1 ? "" : "s"}`, entry.strength.minutes ? `${entry.strength.minutes} min` : null].filter(Boolean).join(" · ");
+    } else if (entry.cardio) {
+      accent = "cardio"; name = entry.cardio.type || "Cardio";
+      meta = [entry.cardio.km ? `${entry.cardio.km} km` : null, entry.cardio.minutes ? `${entry.cardio.minutes} min` : null].filter(Boolean).join(" · ");
+    }
+    return { day: planDate(entry.date).toLocaleDateString(undefined, { weekday: "short" }), name, meta, accent, today: entry.date === todayIso };
+  }
+
   async function wireToday(root) {
-    const fallback = () => {
-      STATE.today = JSON.parse(todayStaticJson);
-      root.innerHTML = S.today();
+    const errorState = () => {
+      root.innerHTML = `<div class="screen-inner">
+        <div class="card" style="text-align:center;padding:32px 18px">
+          <p class="screen-title" style="margin-bottom:6px">Couldn't load today</p>
+          <p class="muted">Something went wrong reaching the server. Check your connection and try again.</p>
+        </div>
+      </div>`;
     };
     root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
+    const todayIso = localIso();
     try {
-      const [response, rulesResponse] = await Promise.all([
+      const recentStart = localIso(new Date(Date.now() - 6 * 86400000));
+      const [healthResponse, rulesResponse, planResponse, statsResponse] = await Promise.all([
         fetch("/api/health"),
         fetch("/api/rules").catch(() => null),
+        fetch("/api/plan?week=current").catch(() => null),
+        fetch(`/api/stats?start=${encodeURIComponent(recentStart)}&end=${encodeURIComponent(todayIso)}`).catch(() => null),
       ]);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const health = (data.days || []).at(-1);
-      if (!health) return fallback();
+      if (!healthResponse.ok) throw new Error(`HTTP ${healthResponse.status}`);
+      const health = ((await healthResponse.json()).days || []).at(-1) || null;
 
-      const current = JSON.parse(todayStaticJson);
-      let ruleWarning = current.warning;
-      if (rulesResponse?.ok) {
-        const rulesData = await rulesResponse.json();
-        if (rulesData.warning) ruleWarning = rulesData.warning;
+      let warning = "";
+      if (rulesResponse?.ok) warning = (await rulesResponse.json()).warning || "";
+
+      let planned = null;
+      if (planResponse?.ok) {
+        const planData = await planResponse.json();
+        planned = mapTodayPlanned((planData.days || []).find((day) => day.date === todayIso));
       }
-      const sleepMinutes = health.sleep_hours == null ? null : Math.round(health.sleep_hours * 60);
-      const sleepBand = health.sleep_score >= 80 ? "good" : health.sleep_score >= 60 ? "fair" : "low";
-      const restingDiff = health.resting_hr == null
-        ? current.restingHr.meta
-        : health.resting_hr_7d_avg == null
-          ? ""
-          : `${health.resting_hr - health.resting_hr_7d_avg > 0 ? "+" : health.resting_hr - health.resting_hr_7d_avg < 0 ? "−" : ""}${Math.abs(health.resting_hr - health.resting_hr_7d_avg)} vs base`;
+
+      let recent = [];
+      if (statsResponse?.ok) {
+        recent = ((await statsResponse.json()).days || []).slice(-3).map((entry) => mapRecentSession(entry, todayIso));
+      }
+
+      const sleepMinutes = health?.sleep_hours == null ? null : Math.round(health.sleep_hours * 60);
+      const sleepBand = health?.sleep_score >= 80 ? "good" : health?.sleep_score >= 60 ? "fair" : "low";
+      const restingDiff = health?.resting_hr == null || health?.resting_hr_7d_avg == null
+        ? ""
+        : `${health.resting_hr - health.resting_hr_7d_avg > 0 ? "+" : health.resting_hr - health.resting_hr_7d_avg < 0 ? "−" : ""}${Math.abs(health.resting_hr - health.resting_hr_7d_avg)} vs base`;
+      const readiness = health?.training_readiness ?? null;
 
       STATE.today = {
-        ...current,
-        readiness: health.training_readiness ?? current.readiness,
-        verdict: health.training_readiness == null
-          ? current.verdict
-          : health.training_readiness >= 66 ? "TRAIN" : health.training_readiness >= 40 ? "EASY" : "REST",
+        dateLine: new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }).toUpperCase(),
+        readiness,
+        verdict: readiness == null ? null : readiness >= 66 ? "TRAIN" : readiness >= 40 ? "EASY" : "REST",
+        planned,
+        recent,
         sleep: {
-          value: sleepMinutes == null ? current.sleep.value : `${Math.floor(sleepMinutes / 60)}h ${sleepMinutes % 60}m`,
-          meta: health.sleep_score == null ? current.sleep.meta : `Score ${health.sleep_score} · ${sleepBand}`,
+          value: sleepMinutes == null ? "—" : `${Math.floor(sleepMinutes / 60)}h ${sleepMinutes % 60}m`,
+          meta: health?.sleep_score == null ? "" : `Score ${health.sleep_score} · ${sleepBand}`,
         },
         hrv: {
-          value: health.hrv == null ? current.hrv.value : `${health.hrv} ms`,
-          meta: health.hrv_status == null ? current.hrv.meta : `${health.hrv_status} · 7-day`,
+          value: health?.hrv == null ? "—" : `${health.hrv} ms`,
+          meta: health?.hrv_status == null ? "" : `${health.hrv_status} · 7-day`,
         },
         bodyBattery: {
-          value: health.body_battery_high == null ? current.bodyBattery.value : String(health.body_battery_high),
-          meta: "Charged",
+          value: health?.body_battery_high == null ? "—" : String(health.body_battery_high),
+          meta: health?.body_battery_high == null ? "" : "Charged",
         },
         restingHr: {
-          value: health.resting_hr == null ? current.restingHr.value : `${health.resting_hr} bpm`,
+          value: health?.resting_hr == null ? "—" : `${health.resting_hr} bpm`,
           meta: restingDiff,
         },
-        acwr: health.acwr ?? current.acwr,
-        acwrPct: health.acwr == null ? current.acwrPct : Math.max(0, Math.min(100, Math.round(health.acwr / 2 * 100))),
-        warning: ruleWarning,
+        acwr: health?.acwr ?? null,
+        acwrPct: health?.acwr == null ? null : Math.max(0, Math.min(100, Math.round(health.acwr / 2 * 100))),
+        warning,
       };
       root.innerHTML = S.today();
     } catch {
-      fallback();
+      errorState();
     }
   }
 
