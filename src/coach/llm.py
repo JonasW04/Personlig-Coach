@@ -9,6 +9,10 @@ _client: AsyncOpenAI | None = None
 _BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 
+class TruncatedCompletion(RuntimeError):
+    """Raised when the model hit the max_tokens limit before finishing."""
+
+
 def get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
@@ -21,12 +25,27 @@ def get_client() -> AsyncOpenAI:
     return _client
 
 
-async def complete(prompt: str, *, max_tokens: int = 1024, model: str | None = None) -> str:
-    """Run a single-turn, tool-less completion and return the text."""
+async def complete(
+    prompt: str,
+    *,
+    max_tokens: int = 1024,
+    model: str | None = None,
+    raise_on_truncation: bool = False,
+) -> str:
+    """Run a single-turn, tool-less completion and return the text.
+
+    With raise_on_truncation, a response cut off at max_tokens raises
+    TruncatedCompletion instead of returning a partial (often unparseable) body.
+    """
     resp = await get_client().chat.completions.create(
         model=model or settings.coach_utility_model,
         reasoning_effort=settings.coach_reasoning_effort or None,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
-    return (resp.choices[0].message.content or "").strip()
+    choice = resp.choices[0]
+    if raise_on_truncation and choice.finish_reason == "length":
+        raise TruncatedCompletion(
+            f"Model output was cut off at the {max_tokens}-token limit before finishing."
+        )
+    return (choice.message.content or "").strip()

@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 
 from coach import body_mode, focus, rules
-from coach.agents.gemini import run_once
 from coach.config import settings
+from coach.llm import TruncatedCompletion, complete
 from coach.db import SessionLocal
 from coach.models import PlanDay, RecoveryRule, TrainingBlock
 from coach.web import stats
@@ -299,11 +299,22 @@ specifically running, cycling, or walking. Use null (not a placeholder string) f
 
 
 async def _generate(week_start: date, block_context: dict | None = None) -> GeneratedWeek:
+    # Plan generation is a self-contained JSON transform: the prompt embeds all
+    # context, so use the tool-less completion path rather than the full coach
+    # agent. The agent's system prompt and tool specs would burn input context
+    # and tempt the model to spend its shared reasoning+output budget on tool
+    # deliberation, truncating the large JSON plan.
     try:
-        raw = await run_once(
+        raw = await complete(
             _prompt(week_start, block_context),
+            model=settings.coach_model,
             max_tokens=settings.coach_plan_max_tokens,
+            raise_on_truncation=True,
         )
+    except TruncatedCompletion as exc:
+        raise PlanGenerationError(
+            "Coach ran out of token budget before finishing the plan. Try again."
+        ) from exc
     except Exception as exc:
         raise PlanGenerationError("Coach could not generate a plan") from exc
     return _extract_week(raw, week_start)

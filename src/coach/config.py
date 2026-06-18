@@ -33,8 +33,9 @@ class Settings(BaseSettings):
     # Output-token budget for week-plan generation. With reasoning_effort="high",
     # max_tokens caps reasoning + the visible answer together, so a low cap can
     # leave the model out of budget before it emits the JSON plan. The full
-    # seven-day structured plan is large, so keep this generous.
-    coach_plan_max_tokens: int = 16384
+    # seven-day structured plan is large (a truncated body fails JSON parsing),
+    # so keep this generous.
+    coach_plan_max_tokens: int = 32768
 
     # Email notifications (SMTP). For Gmail, use an App Password as smtp_password.
     smtp_host: str = ""
