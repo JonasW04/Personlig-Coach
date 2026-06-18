@@ -10,7 +10,6 @@
   const bodyModeStaticJson = JSON.stringify(window.STATE.bodyMode);
   const notificationPrefsStaticJson = JSON.stringify(window.STATE.notificationPrefs);
   const pushNotificationsStaticJson = JSON.stringify(window.STATE.pushNotifications);
-  const actualStaticJson = JSON.stringify(window.STATE.planVsActual);
   const memoryStaticJson = JSON.stringify(window.STATE.coachMemory);
   let memoryIds = {};
   let pushRegistration = null;
@@ -797,20 +796,32 @@
 
   async function wireActual(root) {
     const render = () => { root.innerHTML = S.actual(); bindActual(root); };
-    const fallback = () => { STATE.planVsActual = JSON.parse(actualStaticJson); render(); };
+    // Honest empty/error states — never show fabricated sample data, which looks
+    // like a real (but wrong) comparison with stale dates and exercises.
+    const placeholder = (title, body, showGenerate) => {
+      root.innerHTML = `<div class="screen-inner">${subnavHtml("plan", "actual")}
+        <div class="card" style="text-align:center;padding:32px 18px">
+          <p class="screen-title" style="margin-bottom:6px">${esc(title)}</p>
+          <p class="muted" style="margin-bottom:${showGenerate ? "16px" : "0"}">${esc(body)}</p>
+          ${showGenerate ? `<button class="btn btn-primary" data-action="regenerate-week">Generate week</button>` : ""}
+        </div>
+      </div>`;
+    };
     root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
     try {
       const planResponse = await fetch("/api/plan?week=current");
       if (!planResponse.ok) throw new Error(`HTTP ${planResponse.status}`);
       const planData = await planResponse.json();
-      if (!Array.isArray(planData.days) || !planData.days.length) return fallback();
+      if (!Array.isArray(planData.days) || !planData.days.length) {
+        return placeholder("No plan to compare yet", "Generate a seven-day training plan to compare it against what you actually trained.", true);
+      }
       const end = planData.days.at(-1).date;
       const statsResponse = await fetch(`/api/stats?start=${encodeURIComponent(planData.week_start)}&end=${encodeURIComponent(end)}`);
       if (!statsResponse.ok) throw new Error(`HTTP ${statsResponse.status}`);
       STATE.planVsActual = mapPlanVsActual(planData, await statsResponse.json());
       render();
     } catch {
-      fallback();
+      placeholder("Couldn't load your plan", "Something went wrong reaching the server. Check your connection and try again.", false);
     }
   }
 
