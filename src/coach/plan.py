@@ -6,7 +6,7 @@ import logging
 from datetime import date, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 
 from coach import body_mode, focus, rules
@@ -30,10 +30,21 @@ class GeneratedSet(BaseModel):
     reps: int | None = Field(default=None, ge=1, le=1000)
     rpe: float | None = Field(default=None, ge=6, le=10)
 
+    @field_validator("type", mode="before")
+    @classmethod
+    def _coerce_type(cls, value):
+        # The model sometimes returns null or a synonym; fall back to a normal set.
+        return value if value in {"warmup", "normal", "failure", "dropset"} else "normal"
+
 
 class GeneratedProgression(BaseModel):
     kind: Literal["up", "hold"]
     text: str = Field(min_length=1, max_length=300)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _coerce_kind(cls, value):
+        return value if value in {"up", "hold"} else "hold"
 
 
 class GeneratedExercise(BaseModel):
@@ -64,6 +75,13 @@ class GeneratedDay(BaseModel):
     notes: str = Field(default="", max_length=2000)
     targets: list[GeneratedTarget] = Field(default_factory=list)
 
+    @field_validator("cardio_type", mode="before")
+    @classmethod
+    def _coerce_cardio_type(cls, value):
+        # Irrelevant on strength/rest days: the model often sends null or echoes
+        # the "running|cycling|walking|cardio" placeholder. Normalise to "cardio".
+        return value if value in {"running", "cycling", "walking", "cardio"} else "cardio"
+
 
 class GeneratedWeek(BaseModel):
     days: list[GeneratedDay]
@@ -92,6 +110,11 @@ def _extract_week(raw: str, week_start: date) -> GeneratedWeek:
     try:
         week = GeneratedWeek.model_validate_json(raw[start : end + 1])
     except (ValidationError, ValueError) as exc:
+        log.warning(
+            "plan generation failed validation: %s | json: %r",
+            exc,
+            raw[start : end + 1][:1000],
+        )
         raise PlanGenerationError("Coach returned an invalid plan") from exc
 
     expected = {week_start + timedelta(days=offset) for offset in range(7)}
@@ -257,19 +280,21 @@ descriptor and suggested bias when choosing training volume, cardio demand, and 
 CONTEXT:
 {json.dumps(context, default=str)}
 
-Return ONLY one JSON object with this exact shape:
-{{"days":[{{"date":"YYYY-MM-DD","kind":"strength|cardio|rest","title":"short title",
+Return ONLY one JSON object. Field values shown as <…> below are placeholders describing the
+allowed value — replace each with a real value; never output the placeholder text or the "a|b|c" lists verbatim:
+{{"days":[{{"date":"YYYY-MM-DD","kind":"<exactly one of: strength, cardio, rest>","title":"short title",
 "exercises":[{{"name":"Barbell Squat","scheme":"3×8 · RPE 8","expanded":true,
 "sets":[{{"set":"1","type":"normal","weight_kg":100,"reps":8,"rpe":8}}],
 "rest_seconds":120,"notes":"Controlled eccentric","progression":{{"kind":"hold","text":"Hold load"}},
 "alternatives":"Hack squat · Leg press"}}],"duration_minutes":50,"distance_km":null,
-"zone":null,"cardio_type":"running|cycling|walking|cardio","notes":"Session coaching notes",
+"zone":null,"cardio_type":"<exactly one of: running, cycling, walking, cardio>","notes":"Session coaching notes",
 "targets":[{{"label":"Duration","value":"45–55 min"}}]}}]}}
 
 Include every date exactly once. Strength days require structured exercises and at least one prescribed
 set per exercise. Valid set types are warmup, normal, failure, and dropset. RPE must be 6–10 when present.
-Use an empty exercises array for cardio and rest. Set cardio_type from the planned modality; use cardio only
-when the session is not specifically running, cycling, or walking. Omit or use null for irrelevant fields.
+Use an empty exercises array for cardio and rest. cardio_type must always be exactly one of running, cycling,
+walking, or cardio (use "cardio" on strength and rest days). Use cardio only when the session is not
+specifically running, cycling, or walking. Use null (not a placeholder string) for any other irrelevant field.
 """
 
 

@@ -589,17 +589,31 @@
     const render = () => {
       root.innerHTML = S.plan().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("plan", "plan")}`);
     };
-    const fallback = () => { STATE.weekPlan = JSON.parse(weekPlanStaticJson); render(); };
+    // Honest empty/error states — never show fabricated sample data, which looks
+    // like a real (but wrong) plan with stale dates and exercises.
+    const placeholder = (title, body, showGenerate) => {
+      STATE.weekPlan = { weekStart: currentWeekStartIso() };
+      root.innerHTML = `<div class="screen-inner">${subnavHtml("plan", "plan")}
+        <div id="plan-status" class="gen-status"></div>
+        <div class="card" style="text-align:center;padding:32px 18px">
+          <p class="screen-title" style="margin-bottom:6px">${esc(title)}</p>
+          <p class="muted" style="margin-bottom:${showGenerate ? "16px" : "0"}">${esc(body)}</p>
+          ${showGenerate ? `<button class="btn btn-primary" data-action="regenerate-week">Generate week</button>` : ""}
+        </div>
+      </div>`;
+    };
     root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
     try {
       const response = await fetch("/api/plan?week=current");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      if (!Array.isArray(data.days) || !data.days.length) return fallback();
+      if (!Array.isArray(data.days) || !data.days.length) {
+        return placeholder("No plan for this week yet", "Generate a seven-day training plan from your focus, recovery, and recent training.", true);
+      }
       STATE.weekPlan = mapWeeklyPlan(data);
       render();
     } catch {
-      fallback();
+      placeholder("Couldn't load your plan", "Something went wrong reaching the server. Check your connection and try again.", false);
     }
   }
 
