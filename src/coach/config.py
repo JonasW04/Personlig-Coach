@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     readiness_cutoff_hour: int = 12
     readiness_poll_minutes: int = 30
     readiness_garmin_sync_days: int = 2
+    # Notification producers (local time, SCHEDULER_TIMEZONE). The daily-plan
+    # nudge fires once each morning; the plan-drift check runs midday and looks
+    # back at the previous fully-synced day so each session is reported once.
+    daily_plan_hour: int = 7
+    plan_drift_hour: int = 12
 
     @field_validator("database_url")
     @classmethod

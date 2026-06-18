@@ -40,10 +40,14 @@ class TestMorningReadinessScheduler(unittest.IsolatedAsyncioTestCase):
                 "coach.scheduler.reports.generate_and_store",
                 new_callable=AsyncMock,
             ) as generate,
+            patch(
+                "coach.scheduler.notify_producers.check_recovery_alerts"
+            ) as recovery,
         ):
             await scheduler._readiness_job()
 
         generate.assert_awaited_once_with("readiness")
+        recovery.assert_called_once()
 
     async def test_generates_at_cutoff_even_without_sleep(self):
         now = datetime(2026, 6, 17, 12, 0, tzinfo=timezone.utc)
@@ -57,10 +61,14 @@ class TestMorningReadinessScheduler(unittest.IsolatedAsyncioTestCase):
                 "coach.scheduler.reports.generate_and_store",
                 new_callable=AsyncMock,
             ) as generate,
+            patch(
+                "coach.scheduler.notify_producers.check_recovery_alerts"
+            ) as recovery,
         ):
             await scheduler._readiness_job()
 
         generate.assert_awaited_once_with("readiness")
+        recovery.assert_called_once()
 
     async def test_skips_when_today_readiness_already_exists(self):
         now = datetime(2026, 6, 17, 9, 0, tzinfo=timezone.utc)

@@ -11,11 +11,12 @@ import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
-from coach import reports
+from coach import notify_producers, reports
 from coach.config import settings
 from coach.db import SessionLocal
 from coach.integrations import garmin
@@ -24,6 +25,51 @@ from coach.sync import main as sync_main
 
 log = logging.getLogger("coach.scheduler")
 readiness_lock = asyncio.Lock()
+
+# In-process record of each job's last outcome, surfaced via GET /api/scheduler/status.
+_JOB_STATUS: dict[str, dict] = {}
+_SCHEDULER: AsyncIOScheduler | None = None
+
+
+def _record_event(event) -> None:
+    """APScheduler listener: capture the last run/outcome per job id."""
+    entry = {
+        "last_run": datetime.now(timezone.utc).isoformat(),
+        "status": "error" if event.exception else "missed" if event.code == EVENT_JOB_MISSED else "ok",
+    }
+    entry["error"] = str(event.exception) if getattr(event, "exception", None) else None
+    _JOB_STATUS[event.job_id] = entry
+
+
+def job_status() -> dict:
+    """Serializable snapshot of scheduler health for the status endpoint."""
+    jobs = []
+    sched = _SCHEDULER
+    job_ids = {job.id for job in sched.get_jobs()} if sched else set()
+    job_ids |= set(_JOB_STATUS)
+    for job_id in sorted(job_ids):
+        record = _JOB_STATUS.get(job_id, {})
+        next_run = None
+        if sched is not None:
+            job = sched.get_job(job_id)
+            # ``next_run_time`` is only populated once the scheduler is started.
+            run_time = getattr(job, "next_run_time", None) if job is not None else None
+            if run_time is not None:
+                next_run = run_time.isoformat()
+        jobs.append(
+            {
+                "id": job_id,
+                "status": record.get("status"),
+                "last_run": record.get("last_run"),
+                "error": record.get("error"),
+                "next_run": next_run,
+            }
+        )
+    return {
+        "enabled": settings.run_scheduler,
+        "running": bool(sched is not None and sched.running),
+        "jobs": jobs,
+    }
 
 
 async def _sync_job() -> None:
@@ -126,6 +172,13 @@ async def _readiness_job() -> None:
         await reports.generate_and_store("readiness")
         log.info("scheduled readiness done")
 
+        # Readiness runs once per local day (deduped above), so this fires the
+        # recovery alert at most once daily, right after fresh recovery lands.
+        try:
+            await asyncio.to_thread(notify_producers.check_recovery_alerts)
+        except Exception:  # noqa: BLE001 - an alert failure must not break readiness
+            log.exception("recovery alert check failed")
+
 
 async def _review_job() -> None:
     log.info("scheduled weekly review starting")
@@ -133,9 +186,25 @@ async def _review_job() -> None:
     log.info("scheduled weekly review done")
 
 
+async def _daily_plan_job() -> None:
+    log.info("scheduled daily-plan nudge starting")
+    await asyncio.to_thread(notify_producers.send_daily_plan)
+    log.info("scheduled daily-plan nudge done")
+
+
+async def _plan_drift_job() -> None:
+    log.info("scheduled plan-drift check starting")
+    await asyncio.to_thread(notify_producers.check_plan_drift)
+    log.info("scheduled plan-drift check done")
+
+
 def build_scheduler() -> AsyncIOScheduler:
+    global _SCHEDULER
     tz = settings.scheduler_timezone
     sched = AsyncIOScheduler(timezone=tz)
+    sched.add_listener(
+        _record_event, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED
+    )
     sched.add_job(_sync_job, CronTrigger(hour=3, minute=0, timezone=tz), id="sync")
     start_hour = max(0, min(23, int(settings.readiness_start_hour)))
     cutoff_hour = max(0, min(23, int(settings.readiness_cutoff_hour)))
@@ -158,8 +227,19 @@ def build_scheduler() -> AsyncIOScheduler:
     sched.add_job(
         _review_job, CronTrigger(day_of_week="sun", hour=18, minute=0, timezone=tz), id="weekly"
     )
-    # TODO(Step 3 follow-up): dailyPlan and planDrift producers should call
-    # notify.send(..., preference_key=<key>) once plan/drift events are defined.
-    # TODO(Step 6 follow-up): a rules-triggered recoveryAlerts producer should call
-    # notify.send(..., preference_key="recoveryAlerts", urgent=True).
+    # Notification producers. recoveryAlerts is event-driven off the readiness
+    # job above; dailyPlan and planDrift run once per local day here.
+    daily_plan_hour = max(0, min(23, int(settings.daily_plan_hour)))
+    plan_drift_hour = max(0, min(23, int(settings.plan_drift_hour)))
+    sched.add_job(
+        _daily_plan_job,
+        CronTrigger(hour=daily_plan_hour, minute=0, timezone=tz),
+        id="daily-plan",
+    )
+    sched.add_job(
+        _plan_drift_job,
+        CronTrigger(hour=plan_drift_hour, minute=0, timezone=tz),
+        id="plan-drift",
+    )
+    _SCHEDULER = sched
     return sched

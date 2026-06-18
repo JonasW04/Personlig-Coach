@@ -139,6 +139,8 @@ class SessionManager:
 
 chat_sessions = SessionManager()
 sync_lock = asyncio.Lock()
+# Serializes LLM plan generation so a double-click can't fire two paid runs.
+plan_lock = asyncio.Lock()
 _scheduler = None
 # Tracks the background regeneration of reports kicked off when the focus changes.
 _focus_regen = {"running": False, "kinds": [], "error": None}
@@ -473,23 +475,35 @@ async def get_plan(week: str = "current") -> dict:
     return _plan_response(week_start, days)
 
 
-@app.post("/api/plan/generate")
-async def generate_plan(req: PlanGenerateRequest) -> dict:
+@app.post("/api/plan/generate", response_model=None)
+async def generate_plan(req: PlanGenerateRequest) -> JSONResponse | dict:
+    if plan_lock.locked():
+        return JSONResponse(
+            {"running": True, "message": "A plan is already being generated."},
+            status_code=202,
+        )
     week_start = _week_start(req.week_start)
-    try:
-        days = await plan.generate_week(week_start)
-    except plan.PlanGenerationError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    async with plan_lock:
+        try:
+            days = await plan.generate_week(week_start)
+        except plan.PlanGenerationError as exc:
+            raise HTTPException(502, str(exc)) from exc
     return _plan_response(week_start, days)
 
 
-@app.post("/api/plan/replan")
-async def replan(req: PlanReplanRequest) -> dict:
+@app.post("/api/plan/replan", response_model=None)
+async def replan(req: PlanReplanRequest) -> JSONResponse | dict:
+    if plan_lock.locked():
+        return JSONResponse(
+            {"running": True, "message": "A plan is already being generated."},
+            status_code=202,
+        )
     week_start = _week_start(req.from_date)
-    try:
-        days = await plan.replan_from(req.from_date)
-    except plan.PlanGenerationError as exc:
-        raise HTTPException(502, str(exc)) from exc
+    async with plan_lock:
+        try:
+            days = await plan.replan_from(req.from_date)
+        except plan.PlanGenerationError as exc:
+            raise HTTPException(502, str(exc)) from exc
     return _plan_response(week_start, days)
 
 
@@ -1143,6 +1157,44 @@ async def update_notification_pref(req: NotificationPrefUpdate) -> dict:
         notification_prefs.set_preference, req.key, req.enabled
     )
     return {"prefs": prefs}
+
+
+_NOTIFICATION_PRODUCERS = {
+    "dailyPlan": "send_daily_plan",
+    "recoveryAlerts": "check_recovery_alerts",
+    "planDrift": "check_plan_drift",
+}
+
+
+class NotificationTestRequest(BaseModel):
+    # Either run a real producer by its preference key, or send a plain test ping.
+    kind: Literal["ping", "dailyPlan", "recoveryAlerts", "planDrift"] = "ping"
+
+
+@app.post("/api/notifications/test")
+async def send_test_notification(req: NotificationTestRequest) -> dict:
+    """Fire a notification on demand so delivery can be verified without waiting
+    for the scheduler. ``ping`` ignores preferences; producer kinds run the real
+    event builder (and therefore respect the matching preference)."""
+    from coach import notify, notify_producers
+
+    if req.kind == "ping":
+        used = await asyncio.to_thread(
+            notify.send, "Coach test notification", "If you can read this, delivery works."
+        )
+        return {"kind": req.kind, "channels": used, "configured": notify.channels_configured()}
+
+    producer = getattr(notify_producers, _NOTIFICATION_PRODUCERS[req.kind])
+    used = await asyncio.to_thread(producer)
+    return {"kind": req.kind, "channels": used, "configured": notify.channels_configured()}
+
+
+# ----------------------------------------------------------------- scheduler health
+@app.get("/api/scheduler/status")
+async def scheduler_status() -> dict:
+    from coach.scheduler import job_status
+
+    return job_status()
 
 
 class PushSubscriptionKeys(BaseModel):
