@@ -4,8 +4,6 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const todayStaticJson = JSON.stringify(window.STATE.today);
   const weekPlanStaticJson = JSON.stringify(window.STATE.weekPlan);
-  const builderStaticJson = JSON.stringify(window.STATE.builder);
-  const blocksStaticJson = JSON.stringify(window.STATE.trainingBlock);
   const rulesStaticJson = JSON.stringify(window.STATE.recoveryRules);
   const bodyModeStaticJson = JSON.stringify(window.STATE.bodyMode);
   const notificationPrefsStaticJson = JSON.stringify(window.STATE.notificationPrefs);
@@ -25,8 +23,8 @@
     rules: { tab: "health", sub: "health", render: S.rules, after: wireRules },
     memory: { tab: "chat", sub: "settings", render: S.memory, after: wireMemory },
     notifications: { tab: null, sub: "settings", render: S.notifications, after: wireNotifications },
-    reviews: { tab: "reviews", render: renderReviews, after: loadReviews },
-    chat: { tab: "chat", render: S.chat, after: wireChat },
+    reviews: { tab: "reviews", render: renderReviews, after: loadReviews, prerender: true },
+    chat: { tab: "chat", render: S.chat, after: wireChat, prerender: true },
   };
   const TABS = [
     ["today", "Today", "sun"], ["plan", "Plan", "calendar"], ["activity", "Activity", "activity"],
@@ -72,10 +70,17 @@
     const cfg = VIEWS[view];
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
     const el = $("#screen-" + view);
-    let html = cfg.render();
-    if (cfg.sub) {
-      // inject subnav right after the screen-inner header area
-      html = html.replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml(cfg.sub, view)}`);
+    let html;
+    if (cfg.prerender) {
+      // reviews/chat only patch sub-elements of their template in cfg.after, so
+      // the template must be rendered up front.
+      html = cfg.render();
+      if (cfg.sub) html = html.replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml(cfg.sub, view)}`);
+    } else {
+      // Self-loading views render their own Loading + content (and empty/error
+      // states) in cfg.after. Show a neutral shell so a stale or empty STATE
+      // never flashes fake data — or throws and leaves a blank screen.
+      html = `<div class="screen-inner">${cfg.sub ? subnavHtml(cfg.sub, view) : ""}<div class="muted">Loading…</div></div>`;
     }
     el.innerHTML = html;
     el.classList.add("active");
@@ -308,17 +313,29 @@
     const render = () => {
       root.innerHTML = S.blocks().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("plan", "blocks")}`);
     };
-    const fallback = () => { STATE.trainingBlock = JSON.parse(blocksStaticJson); render(); };
+    // Honest empty/error states — never show fabricated sample data, which looks
+    // like a real (but wrong) training block with stale phases and dates.
+    const placeholder = (title, body, showNew) => {
+      root.innerHTML = `<div class="screen-inner">${subnavHtml("plan", "blocks")}
+        <div class="card" style="text-align:center;padding:32px 18px">
+          <p class="screen-title" style="margin-bottom:6px">${esc(title)}</p>
+          <p class="muted" style="margin-bottom:${showNew ? "16px" : "0"}">${esc(body)}</p>
+          ${showNew ? `<button class="btn btn-primary" data-action="new-block">New block</button>` : ""}
+        </div>
+      </div>`;
+    };
     root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
     try {
       const response = await fetch("/api/blocks");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      if (!data.active || !Array.isArray(data.active.phases) || !data.active.phases.length) return fallback();
+      if (!data.active || !Array.isArray(data.active.phases) || !data.active.phases.length) {
+        return placeholder("No training block yet", "Create a periodized training block to structure your phases over the coming weeks.", true);
+      }
       STATE.trainingBlock = data.active;
       render();
     } catch {
-      fallback();
+      placeholder("Couldn't load your training block", "Something went wrong reaching the server. Check your connection and try again.", false);
     }
   }
 
@@ -657,7 +674,17 @@
     const render = () => {
       root.innerHTML = S.builder().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("plan", "builder")}`);
     };
-    const fallback = () => { STATE.builder = JSON.parse(builderStaticJson); render(); };
+    // Honest empty/error states — never show fabricated sample data, which looks
+    // like a real (but wrong) workout with stale exercises and weights.
+    const placeholder = (title, body, showGenerate) => {
+      root.innerHTML = `<div class="screen-inner">${subnavHtml("plan", "builder")}
+        <div class="card" style="text-align:center;padding:32px 18px">
+          <p class="screen-title" style="margin-bottom:6px">${esc(title)}</p>
+          <p class="muted" style="margin-bottom:${showGenerate ? "16px" : "0"}">${esc(body)}</p>
+          ${showGenerate ? `<button class="btn btn-primary" data-action="regenerate-week">Generate week</button>` : ""}
+        </div>
+      </div>`;
+    };
     root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
     try {
       const planResponse = await fetch("/api/plan?week=current");
@@ -667,13 +694,15 @@
       const selected = strength.find((day) => day.date === localIso())
         || strength.find((day) => day.date > localIso())
         || strength[0];
-      if (!selected) return fallback();
+      if (!selected) {
+        return placeholder("No workout to show yet", "Generate a seven-day training plan and your next strength workout will appear here.", true);
+      }
       const response = await fetch(`/api/plan/day/${encodeURIComponent(selected.date)}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       STATE.builder = mapBuilder(await response.json());
       render();
     } catch {
-      fallback();
+      placeholder("Couldn't load your workout", "Something went wrong reaching the server. Check your connection and try again.", false);
     }
   }
 
