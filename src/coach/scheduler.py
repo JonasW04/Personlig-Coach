@@ -16,7 +16,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
-from coach import notify_producers, reports
+from coach import notify_producers, reports, workout_delivery
 from coach.config import settings
 from coach.db import SessionLocal
 from coach.integrations import garmin
@@ -107,6 +107,15 @@ def _has_sleep_data_for_date(day) -> bool:
 def _has_today_readiness_report(day, tz: ZoneInfo) -> bool:
     """Avoid duplicate scheduled readiness reports for one local day."""
     with SessionLocal() as s:
+        dated = s.execute(
+            select(Report.id).where(
+                Report.kind == "readiness",
+                Report.review_date == day,
+            ).limit(1)
+        ).first()
+        if dated is not None:
+            return True
+        # Backward compatibility for reports created before review_date existed.
         rows = (
             s.execute(
                 select(Report)
@@ -198,6 +207,18 @@ async def _plan_drift_job() -> None:
     log.info("scheduled plan-drift check done")
 
 
+async def _workout_delivery_job() -> None:
+    log.info("scheduled workout-delivery retry starting")
+    today = _now(_scheduler_tz()).date()
+    rows = await asyncio.to_thread(workout_delivery.retry_pending, today)
+    reconciled = await asyncio.to_thread(reports.reconcile_workflow_statuses)
+    log.info(
+        "scheduled workout-delivery retry processed %s sessions and reconciled %s reports",
+        len(rows),
+        reconciled,
+    )
+
+
 def build_scheduler() -> AsyncIOScheduler:
     global _SCHEDULER
     tz = settings.scheduler_timezone
@@ -240,6 +261,11 @@ def build_scheduler() -> AsyncIOScheduler:
         _plan_drift_job,
         CronTrigger(hour=plan_drift_hour, minute=0, timezone=tz),
         id="plan-drift",
+    )
+    sched.add_job(
+        _workout_delivery_job,
+        CronTrigger(minute="*/30", timezone=tz),
+        id="workout-delivery",
     )
     _SCHEDULER = sched
     return sched

@@ -8,6 +8,7 @@ from unittest.mock import patch
 import httpx
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
@@ -137,7 +138,12 @@ class TestHevyRoutineMapping(unittest.TestCase):
 
 class TestPushHevyEndpoint(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
         TrainingBlock.__table__.create(self.engine)
         PlanDay.__table__.create(self.engine)
         self.session_factory = sessionmaker(
@@ -146,7 +152,11 @@ class TestPushHevyEndpoint(unittest.IsolatedAsyncioTestCase):
             expire_on_commit=False,
         )
         self.session_patch = patch.object(web_app, "SessionLocal", self.session_factory)
+        self.delivery_session_patch = patch.object(
+            web_app.workout_delivery, "SessionLocal", self.session_factory
+        )
         self.session_patch.start()
+        self.delivery_session_patch.start()
         with self.session_factory() as session:
             session.add(
                 PlanDay(
@@ -160,6 +170,7 @@ class TestPushHevyEndpoint(unittest.IsolatedAsyncioTestCase):
             session.commit()
 
     def tearDown(self):
+        self.delivery_session_patch.stop()
         self.session_patch.stop()
         self.engine.dispose()
 

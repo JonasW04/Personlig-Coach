@@ -35,7 +35,10 @@ from garminconnect.workout import (
     RunningWorkout,
     WalkingWorkout,
     WorkoutSegment,
+    create_cooldown_step,
     create_interval_step,
+    create_recovery_step,
+    create_warmup_step,
 )
 
 from coach.config import settings
@@ -364,7 +367,14 @@ def _cardio_workout(title: str, payload: dict):
     cardio_type = payload.get("cardio_type") or "cardio"
     if cardio_type not in CARDIO_TYPES:
         raise GarminWorkoutPayloadError(f"Unsupported cardio type: {cardio_type}")
-    duration = payload.get("duration_minutes")
+    structured_steps = payload.get("steps")
+    if not isinstance(structured_steps, list):
+        structured_steps = []
+    duration = (
+        sum(float(step.get("duration_minutes") or 0) for step in structured_steps)
+        if structured_steps
+        else payload.get("duration_minutes")
+    )
     try:
         duration_seconds = int(round(float(duration) * 60))
     except (TypeError, ValueError) as exc:
@@ -390,6 +400,32 @@ def _cardio_workout(title: str, payload: dict):
         details.append(f'{payload["distance_km"]} km')
     if payload.get("notes"):
         details.append(payload["notes"])
+    workout_steps = []
+    step_factories = {
+        "warmup": create_warmup_step,
+        "work": create_interval_step,
+        "recovery": create_recovery_step,
+        "cooldown": create_cooldown_step,
+    }
+    for order, item in enumerate(structured_steps, start=1):
+        if not isinstance(item, dict):
+            raise GarminWorkoutPayloadError("Cardio workout steps must be objects")
+        kind = item.get("kind")
+        factory = step_factories.get(kind)
+        try:
+            step_seconds = int(round(float(item.get("duration_minutes")) * 60))
+        except (TypeError, ValueError) as exc:
+            raise GarminWorkoutPayloadError(
+                "Cardio workout steps need duration_minutes"
+            ) from exc
+        if factory is None or step_seconds <= 0:
+            raise GarminWorkoutPayloadError("Cardio workout has an invalid step")
+        workout_steps.append(factory(step_seconds, step_order=order))
+        target = item.get("target")
+        if target:
+            details.append(f'{kind}: {target}')
+    if not workout_steps:
+        workout_steps = [create_interval_step(duration_seconds, step_order=1)]
     return workout_class(
         workoutName=title,
         estimatedDurationInSecs=duration_seconds,
@@ -398,7 +434,7 @@ def _cardio_workout(title: str, payload: dict):
             WorkoutSegment(
                 segmentOrder=1,
                 sportType=sport_type,
-                workoutSteps=[create_interval_step(duration_seconds, step_order=1)],
+                workoutSteps=workout_steps,
             )
         ],
     )
@@ -434,3 +470,18 @@ def schedule_cardio_workout(title: str, payload: dict, workout_date: date) -> st
     except Exception:  # noqa: BLE001 - scheduling succeeded; refresh is best-effort
         log.debug("could not persist refreshed garmin token", exc_info=True)
     return str(workout_id)
+
+
+def delete_cardio_workout(workout_id: str) -> None:
+    """Delete a Coach-owned Garmin workout before replacing or removing it."""
+    client = _client_from_token()
+    try:
+        client.delete_workout(workout_id)
+    except GarminConnectAuthenticationError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - unofficial API errors vary by version
+        raise GarminWorkoutRequestError("Garmin workout deletion failed") from exc
+    try:
+        save_token(_dump_token(client))
+    except Exception:  # noqa: BLE001 - deletion succeeded; refresh is best-effort
+        log.debug("could not persist refreshed Garmin token", exc_info=True)

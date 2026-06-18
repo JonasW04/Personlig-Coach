@@ -10,16 +10,21 @@ stored as checkable, goal-linked action items for the current week.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from coach import llm, notify
+from sqlalchemy import select
+
+from coach import llm, notify, plan, readiness_score, workout_delivery
 from coach.agents.gemini import run_once
 from coach.config import settings
 from coach.db import SessionLocal
-from coach.models import ActionItem, Report
+from coach.models import ActionItem, PlanDay, Report
+from coach.web import stats
 
 log = logging.getLogger("coach.reports")
 
@@ -125,9 +130,11 @@ _SPECS = {
 }
 
 
-async def generate(kind: str) -> str:
+async def generate(kind: str, *, prompt_context: str | None = None) -> str:
     """Run the coordinator and return the report text. Does not persist or notify."""
     prompt, model, _ = _SPECS[kind]
+    if prompt_context:
+        prompt = f"{prompt}\n\nAUTHORITATIVE COACH CALCULATION:\n{prompt_context}"
     try:
         return await run_once(prompt, model=model)
     except Exception as exc:  # noqa: BLE001 - surface a clean, retryable error
@@ -137,9 +144,29 @@ async def generate(kind: str) -> str:
         ) from exc
 
 
-def save_report(kind: str, content: str) -> Report:
+def save_report(
+    kind: str,
+    content: str,
+    *,
+    review_date: date | None = None,
+    readiness: readiness_score.ReadinessResult | None = None,
+    plan_week_start: date | None = None,
+    workflow_status: str = "complete",
+    workflow_error: str | None = None,
+) -> Report:
     with SessionLocal() as s:
-        report = Report(kind=kind, content=content)
+        report = Report(
+            kind=kind,
+            content=content,
+            review_date=review_date,
+            readiness_score=readiness.score if readiness else None,
+            readiness_details_json=(
+                json.dumps(readiness.components, sort_keys=True) if readiness else None
+            ),
+            plan_week_start=plan_week_start,
+            workflow_status=workflow_status,
+            workflow_error=workflow_error,
+        )
         s.add(report)
         s.commit()
         s.refresh(report)
@@ -150,6 +177,15 @@ def save_report(kind: str, content: str) -> Report:
 def _week_start(d: date | None = None) -> date:
     d = d or date.today()
     return d - timedelta(days=d.weekday())  # Monday
+
+
+def _local_today() -> date:
+    return datetime.now(ZoneInfo(settings.scheduler_timezone)).date()
+
+
+def _latest_health_day(on_or_before: date) -> dict | None:
+    days = stats.health(end=on_or_before.isoformat()).get("days", [])
+    return days[-1] if days else None
 
 
 async def extract_actions(review: str) -> list[dict]:
@@ -184,11 +220,16 @@ async def extract_actions(review: str) -> list[dict]:
     return out[:6]
 
 
-def store_week_actions(report_id: int, actions: list[dict]) -> int:
+def store_week_actions(
+    report_id: int,
+    actions: list[dict],
+    *,
+    week_start: date | None = None,
+) -> int:
     """Replace this week's auto-generated actions with a fresh set from a review."""
     if not actions:
         return 0
-    ws = _week_start()
+    ws = week_start or _week_start()
     due = ws + timedelta(days=6)
     with SessionLocal() as s:
         existing = (
@@ -214,20 +255,152 @@ def store_week_actions(report_id: int, actions: list[dict]) -> int:
     return len(actions)
 
 
-async def generate_and_store(kind: str) -> Report:
+def _set_workflow_status(report_id: int, rows) -> None:
+    failures = [row for row in rows if row.delivery_status == "failed"]
+    with SessionLocal() as session:
+        report = session.get(Report, report_id)
+        if report is None:
+            return
+        if failures:
+            report.workflow_status = "delivery_failed"
+            report.workflow_error = "; ".join(
+                f"{row.date}: {row.delivery_error or 'delivery failed'}" for row in failures
+            )[:2000]
+        else:
+            report.workflow_status = "complete"
+            report.workflow_error = None
+        session.commit()
+
+
+def reconcile_workflow_statuses() -> int:
+    """Refresh report workflow states after background workout-delivery retries."""
+    changed = 0
+    with SessionLocal() as session:
+        candidates = list(
+            session.execute(
+                select(Report).where(
+                    Report.plan_week_start.is_not(None),
+                    Report.workflow_status.in_(["publishing", "delivery_failed"]),
+                )
+            ).scalars()
+        )
+        for report in candidates:
+            week_end = report.plan_week_start + timedelta(days=6)
+            delivery_start = (
+                report.review_date
+                if report.kind == "readiness" and report.review_date is not None
+                else report.plan_week_start
+            )
+            days = list(
+                session.execute(
+                    select(PlanDay).where(
+                        PlanDay.date >= delivery_start,
+                        PlanDay.date <= week_end,
+                    )
+                ).scalars()
+            )
+            failures = [day for day in days if day.delivery_status == "failed"]
+            pending = [day for day in days if day.delivery_status == "pending"]
+            status = "delivery_failed" if failures else "publishing" if pending else "complete"
+            error = (
+                "; ".join(
+                    f"{day.date}: {day.delivery_error or 'delivery failed'}"
+                    for day in failures
+                )[:2000]
+                if failures
+                else None
+            )
+            if report.workflow_status != status or report.workflow_error != error:
+                report.workflow_status = status
+                report.workflow_error = error
+                changed += 1
+        session.commit()
+    return changed
+
+
+async def generate_and_store(kind: str, *, for_date: date | None = None) -> Report:
     """Generate a report, persist it, and push to notify channels. Returns the row.
 
     For weekly reviews, also extract the action plan into trackable action items.
     """
-    content = await generate(kind)
-    report = save_report(kind, content)
-    if kind == "weekly":
+    review_day = for_date or _local_today()
+    readiness: readiness_score.ReadinessResult | None = None
+    plan_week_start: date | None = None
+    planned_days = []
+
+    if kind == "readiness":
+        health_day = await asyncio.to_thread(_latest_health_day, review_day)
+        readiness = readiness_score.calculate(health_day)
+        context = (
+            f"Coach readiness score: {readiness.score}/100. Components: "
+            f"{json.dumps(readiness.components, sort_keys=True)}. Treat this score as fixed: "
+            "explain it and make a consistent Train, Train easy, or Rest decision, but do not replace it."
+        )
+        content = await generate(kind, prompt_context=context)
+        plan_week_start = _week_start(review_day)
+        try:
+            planned_days = await plan.replan_from(
+                review_day,
+                review_context={
+                    "daily_review": content,
+                    "readiness_score": readiness.score,
+                    "readiness_components": readiness.components,
+                },
+            )
+            planned_days = [day for day in planned_days if day.date >= review_day]
+        except plan.PlanGenerationError as exc:
+            raise ReportGenerationError(
+                "Coach generated the readiness assessment but could not update today's plan. Try again."
+            ) from exc
+        report = save_report(
+            kind,
+            content,
+            review_date=review_day,
+            readiness=readiness,
+            plan_week_start=plan_week_start,
+            workflow_status="publishing",
+        )
+    elif kind == "weekly":
+        content = await generate(kind)
+        actions: list[dict] = []
         try:
             actions = await extract_actions(content)
-            store_week_actions(report.id, actions)
         except Exception:  # noqa: BLE001 — never fail a report over its action plan
-            log.exception("failed to extract/store weekly actions")
-    subject = f"{_SPECS[kind][2]} — {date.today():%Y-%m-%d}"
+            log.exception("failed to extract weekly actions")
+        plan_week_start = _week_start(review_day + timedelta(days=7))
+        try:
+            planned_days = await plan.generate_week(
+                plan_week_start,
+                review_context={"weekly_review": content, "actions": actions},
+            )
+        except plan.PlanGenerationError as exc:
+            raise ReportGenerationError(
+                "Coach generated the weekly assessment but could not create next week's plan. Try again."
+            ) from exc
+        report = save_report(
+            kind,
+            content,
+            review_date=review_day,
+            plan_week_start=plan_week_start,
+            workflow_status="publishing",
+        )
+        try:
+            store_week_actions(report.id, actions, week_start=plan_week_start)
+        except Exception:  # noqa: BLE001 — never fail a review over action persistence
+            log.exception("failed to store weekly actions")
+    else:
+        content = await generate(kind)
+        report = save_report(kind, content, review_date=review_day)
+
+    if planned_days:
+        delivered = await asyncio.to_thread(workout_delivery.publish_days, planned_days)
+        await asyncio.to_thread(_set_workflow_status, report.id, delivered)
+        with SessionLocal() as session:
+            refreshed = session.get(Report, report.id)
+            if refreshed is not None:
+                session.expunge(refreshed)
+                report = refreshed
+    subject = f"{_SPECS[kind][2]} — {review_day:%Y-%m-%d}"
     notify.send(
         subject,
         content,

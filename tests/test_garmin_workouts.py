@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
@@ -24,6 +25,11 @@ class TestGarminWorkoutMapping(unittest.TestCase):
             "duration_minutes": 45,
             "distance_km": 8.2,
             "zone": "Zone 2",
+            "steps": [
+                {"kind": "warmup", "duration_minutes": 5, "target": "Easy"},
+                {"kind": "work", "duration_minutes": 35, "target": "Zone 2"},
+                {"kind": "cooldown", "duration_minutes": 5, "target": "Easy"},
+            ],
         }
         with (
             patch.object(garmin, "_client_from_token", return_value=client),
@@ -38,6 +44,7 @@ class TestGarminWorkoutMapping(unittest.TestCase):
         workout = client.upload_running_workout.call_args.args[0]
         self.assertEqual("running", workout.sportType["sportTypeKey"])
         self.assertEqual(2700, workout.estimatedDurationInSecs)
+        self.assertEqual(3, len(workout.workoutSegments[0].workoutSteps))
         self.assertIn("Zone 2", workout.description)
         client.schedule_workout.assert_called_once_with(321, "2026-06-19")
         save_token.assert_called_once_with("token")
@@ -49,14 +56,24 @@ class TestGarminWorkoutMapping(unittest.TestCase):
 
 class TestGarminScheduleEndpoint(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        self.engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
         TrainingBlock.__table__.create(self.engine)
         PlanDay.__table__.create(self.engine)
         self.session_factory = sessionmaker(bind=self.engine, future=True, expire_on_commit=False)
         self.session_patch = patch.object(web_app, "SessionLocal", self.session_factory)
+        self.delivery_session_patch = patch.object(
+            web_app.workout_delivery, "SessionLocal", self.session_factory
+        )
         self.session_patch.start()
+        self.delivery_session_patch.start()
 
     def tearDown(self):
+        self.delivery_session_patch.stop()
         self.session_patch.stop()
         self.engine.dispose()
 
@@ -77,7 +94,9 @@ class TestGarminScheduleEndpoint(unittest.IsolatedAsyncioTestCase):
             session.commit()
 
         with patch.object(
-            web_app.garmin, "schedule_cardio_workout", return_value="321"
+            web_app.workout_delivery.garmin,
+            "schedule_cardio_workout",
+            return_value="321",
         ) as schedule:
             response = await web_app.schedule_plan_day_in_garmin(planned_date)
 

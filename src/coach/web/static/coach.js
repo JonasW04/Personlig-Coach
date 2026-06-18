@@ -506,11 +506,12 @@
     const todayIso = localIso();
     try {
       const recentStart = localIso(new Date(Date.now() - 6 * 86400000));
-      const [healthResponse, rulesResponse, planResponse, statsResponse] = await Promise.all([
+      const [healthResponse, rulesResponse, planResponse, statsResponse, readinessResponse] = await Promise.all([
         fetch("/api/health"),
         fetch("/api/rules").catch(() => null),
         fetch("/api/plan?week=current").catch(() => null),
         fetch(`/api/stats?start=${encodeURIComponent(recentStart)}&end=${encodeURIComponent(todayIso)}`).catch(() => null),
+        fetch("/api/reports?kind=readiness&limit=1").catch(() => null),
       ]);
       if (!healthResponse.ok) throw new Error(`HTTP ${healthResponse.status}`);
       const health = ((await healthResponse.json()).days || []).at(-1) || null;
@@ -534,7 +535,11 @@
       const restingDiff = health?.resting_hr == null || health?.resting_hr_7d_avg == null
         ? ""
         : `${health.resting_hr - health.resting_hr_7d_avg > 0 ? "+" : health.resting_hr - health.resting_hr_7d_avg < 0 ? "−" : ""}${Math.abs(health.resting_hr - health.resting_hr_7d_avg)} vs base`;
-      const readiness = health?.training_readiness ?? null;
+      let readiness = null;
+      if (readinessResponse?.ok) {
+        const latest = ((await readinessResponse.json()).reports || [])[0] || null;
+        if (latest?.review_date === todayIso) readiness = latest.readiness_score ?? null;
+      }
 
       STATE.today = {
         dateLine: new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }).toUpperCase(),
@@ -622,14 +627,23 @@
       ],
       days: rows.map((day) => {
         const [status, statusKind, dot] = day.kind === "rest" ? ["REST DAY", "rest", "violet"] : (statusMap[day.status] || statusMap.planned);
+        const deliveryFailed = day.delivery_status === "failed";
+        const deliveryPending = day.delivery_status === "pending";
+        const delivery = day.kind === "rest"
+          ? ""
+          : deliveryFailed
+            ? `Delivery failed${day.delivery_error ? ` · ${day.delivery_error}` : ""}`
+            : deliveryPending
+              ? `Publishing to ${day.delivery}…`
+              : day.delivery;
         return {
           date: day.date,
           day: day.weekday.slice(0, 3),
           name: day.title,
           accent: day.kind,
           exercises: planExercises(day),
-          delivery: day.kind === "rest" ? "" : day.delivery,
-          deliveryColor: day.status === "missed" ? "orange" : day.status === "replaced" ? "amber" : "green",
+          delivery,
+          deliveryColor: deliveryFailed ? "orange" : deliveryPending ? "amber" : day.status === "missed" ? "orange" : day.status === "replaced" ? "amber" : "green",
           status,
           statusKind,
           dot,

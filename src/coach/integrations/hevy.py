@@ -186,6 +186,13 @@ def update_routine(routine_id: str, payload: dict) -> dict:
         return response.json()
 
 
+def delete_routine(routine_id: str) -> None:
+    """Delete a Coach-owned routine that is no longer present in the plan."""
+    with _client() as client:
+        response = client.delete(f"/routines/{routine_id}")
+        response.raise_for_status()
+
+
 def push_routine(title: str, payload: dict, routine_id: str | None = None) -> str:
     routine_payload = build_routine_payload(title, payload)
     result = update_routine(routine_id, routine_payload) if routine_id else create_routine(routine_payload)

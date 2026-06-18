@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from coach import body_mode, focus, rules
 from coach.config import settings
+from coach.integrations import hevy
 from coach.llm import TruncatedCompletion, complete
 from coach.db import SessionLocal
 from coach.models import PlanDay, RecoveryRule, TrainingBlock
@@ -63,6 +64,13 @@ class GeneratedTarget(BaseModel):
     value: str = Field(min_length=1, max_length=100)
 
 
+class GeneratedCardioStep(BaseModel):
+    kind: Literal["warmup", "work", "recovery", "cooldown"]
+    duration_minutes: int = Field(ge=1, le=180)
+    target: str | None = Field(default=None, max_length=100)
+    notes: str = Field(default="", max_length=500)
+
+
 class GeneratedDay(BaseModel):
     date: date
     kind: Literal["strength", "cardio", "rest"]
@@ -72,6 +80,7 @@ class GeneratedDay(BaseModel):
     distance_km: float | None = Field(default=None, ge=0, le=500)
     zone: str | None = Field(default=None, max_length=100)
     cardio_type: Literal["running", "cycling", "walking", "cardio"] = "cardio"
+    steps: list[GeneratedCardioStep] = Field(default_factory=list)
     notes: str = Field(default="", max_length=2000)
     targets: list[GeneratedTarget] = Field(default_factory=list)
 
@@ -148,6 +157,8 @@ def _extract_week(raw: str, week_start: date) -> GeneratedWeek:
         item.title = item.title.strip()
         if item.kind == "strength" and not item.exercises:
             raise PlanGenerationError("Strength sessions require at least one exercise")
+        if item.kind == "cardio" and not item.steps:
+            raise PlanGenerationError("Cardio sessions require structured workout steps")
         for exercise in item.exercises:
             exercise.name = exercise.name.strip()
             exercise.scheme = exercise.scheme.strip()
@@ -179,19 +190,35 @@ def _persist(
                 PlanDay.date <= week_end,
             )
         ).scalars().all()
-        for row in existing:
-            session.delete(row)
+        existing_by_date = {row.date: row for row in existing}
         for item in rows:
-            session.add(
-                PlanDay(
+            payload_json = json.dumps(_payload(item), sort_keys=True)
+            row = existing_by_date.get(item.date)
+            if row is None:
+                session.add(PlanDay(
                     date=item.date,
                     kind=item.kind,
                     title=item.title,
                     status="planned",
-                    payload_json=json.dumps(_payload(item)),
+                    delivery_status="not_applicable" if item.kind == "rest" else "pending",
+                    payload_json=payload_json,
                     block_id=block_id,
-                )
+                ))
+                continue
+
+            changed = (
+                row.kind != item.kind
+                or row.title != item.title
+                or row.payload_json != payload_json
             )
+            row.kind = item.kind
+            row.title = item.title
+            row.payload_json = payload_json
+            row.block_id = block_id
+            if changed:
+                row.status = "planned"
+                row.delivery_status = "not_applicable" if item.kind == "rest" else "pending"
+                row.delivery_error = None
         session.commit()
     return get_week(week_start_for(replace_from))
 
@@ -223,6 +250,9 @@ def plan_day_json(day: PlanDay) -> dict:
         "status": day.status,
         "hevy_routine_id": day.hevy_routine_id,
         "garmin_workout_id": day.garmin_workout_id,
+        "delivery_status": day.delivery_status,
+        "delivery_error": day.delivery_error,
+        "published_at": day.published_at.isoformat() if day.published_at else None,
         "payload_json": payload,
         "block_id": day.block_id,
         "created_at": day.created_at.isoformat() if day.created_at else None,
@@ -279,12 +309,45 @@ def _recovery_rules_context(health_day: dict | None) -> dict:
     }
 
 
-def _prompt(week_start: date, block_context: dict | None = None) -> str:
+def _exercise_catalog() -> list[dict]:
+    """Return a compact Hevy catalog for exact, publishable exercise selection."""
+    try:
+        templates = hevy.fetch_exercise_templates()
+    except Exception:  # noqa: BLE001 - planning still works when Hevy is unavailable
+        log.info("Hevy exercise catalog unavailable during planning", exc_info=True)
+        return []
+    return [
+        {"id": str(item["id"]), "title": str(item["title"])}
+        for item in templates
+        if item.get("id") and item.get("title")
+    ]
+
+
+def _prompt(
+    week_start: date,
+    block_context: dict | None = None,
+    review_context: dict | None = None,
+    exercise_catalog: list[dict] | None = None,
+    planning_from: date | None = None,
+) -> str:
     week_end = week_start + timedelta(days=6)
     history_start = week_start - timedelta(days=28)
+    planning_from = planning_from or week_start
+    history_end = planning_from - timedelta(days=1)
     health_days = stats.health().get("days", [])
-    recent = stats.activity(history_start.isoformat(), (week_start - timedelta(days=1)).isoformat())
-    latest_health = health_days[-1] if health_days else None
+    recent = stats.activity(history_start.isoformat(), history_end.isoformat())
+    latest_health = dict(health_days[-1]) if health_days else None
+    calculated_score = (review_context or {}).get("readiness_score")
+    if latest_health is not None and calculated_score is not None:
+        latest_health["garmin_training_readiness"] = latest_health.get(
+            "training_readiness"
+        )
+        latest_health["training_readiness"] = calculated_score
+    preserved = [
+        plan_day_json(day)
+        for day in get_week(week_start)
+        if day.date < planning_from
+    ]
     context = {
         "focus": focus.current_directive(),
         "latest_recovery": latest_health,
@@ -292,6 +355,10 @@ def _prompt(week_start: date, block_context: dict | None = None) -> str:
         "active_training_block": block_context,
         "recovery_rules": _recovery_rules_context(latest_health),
         "body_mode": body_mode.get_body_mode(),
+        "review_context": review_context,
+        "available_hevy_exercises": (exercise_catalog or [])[:500],
+        "planning_from": planning_from.isoformat(),
+        "preserved_completed_days": preserved,
     }
     return f"""Create a seven-day training plan for {week_start.isoformat()} through {week_end.isoformat()}.
 Use the supplied focus, body mode, active training-block phase, recovery guardrails, latest recovery state, and recent completed training.
@@ -299,6 +366,13 @@ Bias weekly volume and intensity toward the block phase and its sets-per-muscle-
 not a workout tracker: produce planned sessions only and do not add logging or timer instructions. Respect every
 enabled recovery guardrail; apply the structured action when a numeric guardrail is triggered. Apply the body mode's
 descriptor and suggested bias when choosing training volume, cardio demand, and recovery trade-offs.
+Design every strength workout exercise-by-exercise for this athlete; do not copy or limit the plan to
+previously saved routines. Prefer exact titles from available_hevy_exercises so every chosen movement can
+be published to Hevy. Select movements for the goal, movement balance, recent performance, fatigue,
+equipment implied by the catalog, and progression. Cardio sessions must be structured Garmin workouts,
+including warm-up, work, recovery (when relevant), and cool-down steps rather than only a title and duration.
+When planning_from is after Monday, treat preserved_completed_days as immutable history. Rebalance only planning_from
+through Sunday while still returning all seven dates in the JSON contract.
 
 CONTEXT:
 {json.dumps(context, default=str)}
@@ -310,26 +384,41 @@ allowed value — replace each with a real value; never output the placeholder t
 "sets":[{{"set":"1","type":"normal","weight_kg":100,"reps":8,"rpe":8}}],
 "rest_seconds":120,"notes":"Controlled eccentric","progression":{{"kind":"hold","text":"Hold load"}},
 "alternatives":"Hack squat · Leg press"}}],"duration_minutes":50,"distance_km":null,
-"zone":null,"cardio_type":"<exactly one of: running, cycling, walking, cardio>","notes":"Session coaching notes",
+"zone":null,"cardio_type":"<exactly one of: running, cycling, walking, cardio>",
+"steps":[{{"kind":"<warmup|work|recovery|cooldown>","duration_minutes":10,"target":"Zone 2","notes":"Easy"}}],
+"notes":"Session coaching notes",
 "targets":[{{"label":"Duration","value":"45–55 min"}}]}}]}}
 
 Include every date exactly once. Strength days require structured exercises and at least one prescribed
 set per exercise. Valid set types are warmup, normal, failure, and dropset. RPE must be 6–10 when present.
-Use an empty exercises array for cardio and rest. cardio_type must always be exactly one of running, cycling,
+Use an empty exercises array for cardio and rest. Cardio days require at least one structured step; use an empty
+steps array for strength and rest. cardio_type must always be exactly one of running, cycling,
 walking, or cardio (use "cardio" on strength and rest days). Use cardio only when the session is not
 specifically running, cycling, or walking. Use null (not a placeholder string) for any other irrelevant field.
 """
 
 
-async def _generate(week_start: date, block_context: dict | None = None) -> GeneratedWeek:
+async def _generate(
+    week_start: date,
+    block_context: dict | None = None,
+    review_context: dict | None = None,
+    planning_from: date | None = None,
+) -> GeneratedWeek:
     # Plan generation is a self-contained JSON transform: the prompt embeds all
     # context, so use the tool-less completion path rather than the full coach
     # agent. The agent's system prompt and tool specs would burn input context
     # and tempt the model to spend its shared reasoning+output budget on tool
     # deliberation, truncating the large JSON plan.
     try:
+        exercise_catalog = _exercise_catalog()
         raw = await complete(
-            _prompt(week_start, block_context),
+            _prompt(
+                week_start,
+                block_context,
+                review_context,
+                exercise_catalog,
+                planning_from,
+            ),
             model=settings.coach_model,
             max_tokens=settings.coach_plan_max_tokens,
             raise_on_truncation=True,
@@ -340,18 +429,36 @@ async def _generate(week_start: date, block_context: dict | None = None) -> Gene
         ) from exc
     except Exception as exc:
         raise PlanGenerationError("Coach could not generate a plan") from exc
-    return _extract_week(raw, week_start)
+    week = _extract_week(raw, week_start)
+    if exercise_catalog:
+        for day in week.days:
+            for exercise in day.exercises:
+                try:
+                    exercise.name = str(
+                        hevy.match_exercise_template(exercise.name, exercise_catalog)["title"]
+                    )
+                except hevy.HevyRoutineError as exc:
+                    raise PlanGenerationError(str(exc)) from exc
+    return week
 
 
-async def generate_week(week_start: date) -> list[PlanDay]:
+async def generate_week(
+    week_start: date, *, review_context: dict | None = None
+) -> list[PlanDay]:
     week_start = week_start_for(week_start)
     block_context = _active_block_context(week_start)
-    generated = await _generate(week_start, block_context)
+    generated = await _generate(
+        week_start, block_context, review_context, planning_from=week_start
+    )
     return _persist(generated, week_start, block_context["id"] if block_context else None)
 
 
-async def replan_from(from_date: date) -> list[PlanDay]:
+async def replan_from(
+    from_date: date, *, review_context: dict | None = None
+) -> list[PlanDay]:
     week_start = week_start_for(from_date)
     block_context = _active_block_context(week_start)
-    generated = await _generate(week_start, block_context)
+    generated = await _generate(
+        week_start, block_context, review_context, planning_from=from_date
+    )
     return _persist(generated, from_date, block_context["id"] if block_context else None)

@@ -56,6 +56,11 @@ def generated_week(prefix: str = "New") -> str:
         )
         if kind == "cardio":
             days[-1]["cardio_type"] = "running"
+            days[-1]["steps"] = [
+                {"kind": "warmup", "duration_minutes": 5, "target": "Easy"},
+                {"kind": "work", "duration_minutes": 30, "target": "Zone 2"},
+                {"kind": "cooldown", "duration_minutes": 5, "target": "Easy"},
+            ]
     return json.dumps({"days": days})
 
 
@@ -97,7 +102,7 @@ class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
     async def test_generate_validates_and_persists_all_seven_days(self):
         with (
             patch.object(plan, "_prompt", return_value="prompt"),
-            patch.object(plan, "run_once", new=AsyncMock(return_value=generated_week())),
+            patch.object(plan, "complete", new=AsyncMock(return_value=generated_week())),
         ):
             rows = await plan.generate_week(WEEK_START)
 
@@ -112,7 +117,7 @@ class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
         self.add_day(WEEK_START + timedelta(days=1), "Original Tuesday")
         with (
             patch.object(plan, "_prompt", return_value="prompt"),
-            patch.object(plan, "run_once", new=AsyncMock(return_value=generated_week())),
+            patch.object(plan, "complete", new=AsyncMock(return_value=generated_week())),
         ):
             rows = await plan.replan_from(WEEK_START + timedelta(days=2))
 
@@ -129,7 +134,7 @@ class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
             patch.object(plan, "_prompt", return_value="prompt"),
             patch.object(
                 plan,
-                "run_once",
+                "complete",
                 new=AsyncMock(return_value=json.dumps(invalid)),
             ),
         ):
@@ -184,7 +189,7 @@ class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
             patch.object(plan.stats, "health", return_value={"days": [{"training_readiness": 42}]}),
             patch.object(plan.stats, "activity", return_value={"days": []}),
             patch.object(plan.focus, "current_directive", return_value="Build strength."),
-            patch.object(plan, "run_once", new=AsyncMock(return_value=generated_week())) as run,
+            patch.object(plan, "complete", new=AsyncMock(return_value=generated_week())) as run,
         ):
             rows = await plan.generate_week(WEEK_START)
 
@@ -196,3 +201,30 @@ class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"label": "Low readiness"', prompt)
         self.assertIn('"triggered": true', prompt)
         self.assertIn('"body_mode": {"mode": "cut"', prompt)
+
+    async def test_changed_plan_preserves_remote_ids_and_marks_delivery_pending(self):
+        with self.session_factory() as session:
+            session.add(
+                PlanDay(
+                    date=WEEK_START,
+                    kind="strength",
+                    title="Old strength",
+                    status="ready_in_hevy",
+                    delivery_status="delivered",
+                    hevy_routine_id="routine-1",
+                    published_payload_hash="old-hash",
+                    payload_json='{"exercises": []}',
+                )
+            )
+            session.commit()
+
+        with (
+            patch.object(plan, "_prompt", return_value="prompt"),
+            patch.object(plan, "complete", new=AsyncMock(return_value=generated_week())),
+        ):
+            rows = await plan.generate_week(WEEK_START)
+
+        monday = rows[0]
+        self.assertEqual("routine-1", monday.hevy_routine_id)
+        self.assertEqual("pending", monday.delivery_status)
+        self.assertEqual("planned", monday.status)

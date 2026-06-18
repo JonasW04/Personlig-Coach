@@ -18,9 +18,9 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import uvicorn
-import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
@@ -34,11 +34,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
-from coach import body_mode, focus, memory, notification_prefs, plan, rules
+from coach import (
+    body_mode,
+    focus,
+    memory,
+    notification_prefs,
+    plan,
+    rules,
+    workout_delivery,
+)
 from coach.agents.gemini import GeminiCoachSession, StepEvent, TextEvent
 from coach.config import settings
 from coach.db import SessionLocal, init_db
-from coach.integrations import garmin, hevy
 from coach.models import (
     ActionItem,
     ChatConversation,
@@ -62,6 +69,10 @@ PUBLIC_PATHS = {"/login", "/logout", "/healthz", "/sw.js", "/manifest.webmanifes
 def _week_start(d: date | None = None) -> date:
     d = d or date.today()
     return d - timedelta(days=d.weekday())  # Monday
+
+
+def _local_today() -> date:
+    return datetime.now(ZoneInfo(settings.scheduler_timezone)).date()
 
 
 # --------------------------------------------------------------------------- chat
@@ -142,8 +153,6 @@ sync_lock = asyncio.Lock()
 # Serializes LLM plan generation so a double-click can't fire two paid runs.
 plan_lock = asyncio.Lock()
 _scheduler = None
-# Tracks the background regeneration of reports kicked off when the focus changes.
-_focus_regen = {"running": False, "kinds": [], "error": None}
 
 
 @asynccontextmanager
@@ -488,7 +497,11 @@ async def generate_plan(req: PlanGenerateRequest) -> JSONResponse | dict:
             days = await plan.generate_week(week_start)
         except plan.PlanGenerationError as exc:
             raise HTTPException(502, str(exc)) from exc
-    return _plan_response(week_start, days)
+    deliverable = [day for day in days if day.date >= _local_today()]
+    delivered = await asyncio.to_thread(workout_delivery.publish_days, deliverable)
+    delivered_by_date = {day.date: day for day in delivered}
+    delivered = [delivered_by_date.get(day.date, day) for day in days]
+    return _plan_response(week_start, delivered)
 
 
 @app.post("/api/plan/replan", response_model=None)
@@ -504,7 +517,11 @@ async def replan(req: PlanReplanRequest) -> JSONResponse | dict:
             days = await plan.replan_from(req.from_date)
         except plan.PlanGenerationError as exc:
             raise HTTPException(502, str(exc)) from exc
-    return _plan_response(week_start, days)
+    deliverable = [day for day in days if day.date >= req.from_date]
+    delivered = await asyncio.to_thread(workout_delivery.publish_days, deliverable)
+    delivered_by_date = {day.date: day for day in delivered}
+    delivered = [delivered_by_date.get(day.date, day) for day in days]
+    return _plan_response(week_start, delivered)
 
 
 @app.get("/api/plan/day/{planned_date}")
@@ -528,34 +545,11 @@ async def push_plan_day_to_hevy(planned_date: date) -> dict:
         raise HTTPException(404, "planned session not found")
     if day.kind != "strength":
         raise HTTPException(400, "only strength sessions can be pushed to Hevy")
-    try:
-        payload = json.loads(day.payload_json or "{}")
-        routine_id = await asyncio.to_thread(
-            hevy.push_routine,
-            day.title,
-            payload,
-            day.hevy_routine_id,
-        )
-    except json.JSONDecodeError as exc:
-        raise HTTPException(422, "planned session payload is invalid") from exc
-    except hevy.HevyConfigurationError as exc:
-        raise HTTPException(503, str(exc)) from exc
-    except hevy.HevyRoutineError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, "Hevy API request failed") from exc
-
-    with SessionLocal() as session:
-        saved = session.execute(
-            select(PlanDay).where(PlanDay.date == planned_date)
-        ).scalars().first()
-        if saved is None:
-            raise HTTPException(409, "planned session changed during Hevy push")
-        saved.hevy_routine_id = routine_id
-        saved.status = "ready_in_hevy"
-        session.commit()
-        session.refresh(saved)
-        session.expunge(saved)
+    saved = await asyncio.to_thread(workout_delivery.publish_day, planned_date)
+    if saved is None:
+        raise HTTPException(409, "planned session changed during Hevy push")
+    if saved.delivery_status == "failed":
+        raise HTTPException(502, saved.delivery_error or "Hevy delivery failed")
     return plan.plan_day_json(saved)
 
 
@@ -569,33 +563,11 @@ async def schedule_plan_day_in_garmin(planned_date: date) -> dict:
         raise HTTPException(404, "planned session not found")
     if day.kind != "cardio":
         raise HTTPException(400, "only cardio sessions can be scheduled in Garmin")
-    if day.garmin_workout_id and day.status == "scheduled":
-        return plan.plan_day_json(day)
-    try:
-        payload = json.loads(day.payload_json or "{}")
-        workout_id = await asyncio.to_thread(
-            garmin.schedule_cardio_workout, day.title, payload, day.date
-        )
-    except json.JSONDecodeError as exc:
-        raise HTTPException(422, "planned session payload is invalid") from exc
-    except garmin.GarminWorkoutPayloadError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except garmin.GarminConnectAuthenticationError as exc:
-        raise HTTPException(503, "Garmin is not authorized") from exc
-    except garmin.GarminWorkoutRequestError as exc:
-        raise HTTPException(502, str(exc)) from exc
-
-    with SessionLocal() as session:
-        saved = session.execute(
-            select(PlanDay).where(PlanDay.date == planned_date)
-        ).scalars().first()
-        if saved is None:
-            raise HTTPException(409, "planned session changed during Garmin scheduling")
-        saved.garmin_workout_id = workout_id
-        saved.status = "scheduled"
-        session.commit()
-        session.refresh(saved)
-        session.expunge(saved)
+    saved = await asyncio.to_thread(workout_delivery.publish_day, planned_date)
+    if saved is None:
+        raise HTTPException(409, "planned session changed during Garmin scheduling")
+    if saved.delivery_status == "failed":
+        raise HTTPException(502, saved.delivery_error or "Garmin delivery failed")
     return plan.plan_day_json(saved)
 
 
@@ -1133,10 +1105,14 @@ async def import_latest_actions() -> dict:
         ).scalars().first()
         if row is None:
             raise HTTPException(404, "No weekly review found. Generate one first.")
-        report_id, content = row.id, row.content
+        report_id, content, target_week = row.id, row.content, row.plan_week_start
 
     actions = await reports.extract_actions(content)
-    count = reports.store_week_actions(report_id, actions)
+    count = reports.store_week_actions(
+        report_id,
+        actions,
+        week_start=target_week,
+    )
     return {"count": count}
 
 
@@ -1268,6 +1244,11 @@ def _report_json(r: Report) -> dict:
         "kind": r.kind,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "content": r.content,
+        "review_date": r.review_date.isoformat() if r.review_date else None,
+        "readiness_score": r.readiness_score,
+        "plan_week_start": r.plan_week_start.isoformat() if r.plan_week_start else None,
+        "workflow_status": r.workflow_status,
+        "workflow_error": r.workflow_error,
     }
 
 
@@ -1306,26 +1287,10 @@ class FocusUpdate(BaseModel):
     focus_raw: str
 
 
-async def _regenerate_reports(kinds: tuple[str, ...]) -> None:
-    """Regenerate standing reports so they reflect a freshly-changed focus."""
-    from coach import reports
-
-    _focus_regen.update(running=True, kinds=list(kinds), error=None)
-    try:
-        for kind in kinds:
-            try:
-                await reports.generate_and_store(kind)
-            except Exception as exc:  # noqa: BLE001
-                log.exception("focus regen failed for %s", kind)
-                _focus_regen["error"] = str(exc)
-    finally:
-        _focus_regen.update(running=False, kinds=[])
-
-
 @app.get("/api/focus")
 async def get_focus() -> dict:
     profile = await asyncio.to_thread(focus.get_profile)
-    return {**profile, "regenerating": _focus_regen["running"]}
+    return {**profile, "regenerating": False}
 
 
 @app.post("/api/focus")
@@ -1337,10 +1302,7 @@ async def set_focus(req: FocusUpdate) -> dict:
     # Drop live chat clients so the next message rebuilds them with the new
     # directive; prior turns are replayed from the DB, so context is preserved.
     await chat_sessions.close_all()
-    # Regenerate the standing reports in the background so they immediately
-    # represent the new focus; the client polls /api/focus for completion.
-    asyncio.create_task(_regenerate_reports(("readiness", "weekly")))
-    return {**profile, "regenerating": True}
+    return {**profile, "regenerating": False}
 
 
 @app.get("/sw.js")

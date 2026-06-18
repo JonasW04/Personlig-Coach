@@ -114,6 +114,22 @@ class TestPlanEndpoints(unittest.TestCase):
 
 
 class TestReportEndpoints(unittest.TestCase):
+    def test_report_json_exposes_daily_score_and_workflow_status(self):
+        from datetime import date
+
+        report = appmod.Report(
+            id=1,
+            kind="readiness",
+            content="Verdict: Train",
+            review_date=date(2026, 6, 18),
+            readiness_score=82,
+            workflow_status="complete",
+        )
+        payload = appmod._report_json(report)
+        self.assertEqual(82, payload["readiness_score"])
+        self.assertEqual("2026-06-18", payload["review_date"])
+        self.assertEqual("complete", payload["workflow_status"])
+
     @patch("coach.reports.generate_and_store")
     def test_generate_maps_model_failure_to_502(self, mock_gen):
         from coach import reports

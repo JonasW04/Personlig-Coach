@@ -179,6 +179,12 @@ class Report(Base):
         DateTime(timezone=True), default=_utcnow
     )
     content: Mapped[str] = mapped_column(Text)
+    review_date: Mapped[date | None] = mapped_column(Date, index=True)
+    readiness_score: Mapped[int | None] = mapped_column(Integer)
+    readiness_details_json: Mapped[str | None] = mapped_column(Text)
+    plan_week_start: Mapped[date | None] = mapped_column(Date)
+    workflow_status: Mapped[str] = mapped_column(String, default="complete", index=True)
+    workflow_error: Mapped[str | None] = mapped_column(Text)
 
 
 class Goal(Base):
@@ -274,6 +280,10 @@ class PlanDay(Base):
     status: Mapped[str] = mapped_column(String, default="planned", index=True)
     hevy_routine_id: Mapped[str | None] = mapped_column(String)
     garmin_workout_id: Mapped[str | None] = mapped_column(String)
+    published_payload_hash: Mapped[str | None] = mapped_column(String)
+    delivery_status: Mapped[str] = mapped_column(String, default="pending", index=True)
+    delivery_error: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
     block_id: Mapped[int | None] = mapped_column(ForeignKey("training_blocks.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

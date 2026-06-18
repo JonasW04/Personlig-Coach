@@ -102,9 +102,13 @@ def _enabled_rules() -> list[RecoveryRule]:
         )
 
 
-def check_recovery_alerts(health_day: dict | None = None) -> list[str]:
+_LATEST_HEALTH = object()
+
+
+def check_recovery_alerts(health_day: dict | None | object = _LATEST_HEALTH) -> list[str]:
     """Alert when enabled recovery guardrails are triggered by today's recovery."""
-    health_day = health_day if health_day is not None else _latest_health_day()
+    if health_day is _LATEST_HEALTH:
+        health_day = _latest_health_day()
     if not health_day:
         return []
     triggered = rules.evaluate(_enabled_rules(), health_day)

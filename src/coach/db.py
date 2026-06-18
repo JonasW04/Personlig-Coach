@@ -37,6 +37,19 @@ _COLUMN_MIGRATIONS = [
     "ALTER TABLE coach_profile ADD COLUMN IF NOT EXISTS body_mode VARCHAR",
     "ALTER TABLE coach_profile ADD COLUMN IF NOT EXISTS body_mode_started_at TIMESTAMP WITH TIME ZONE",
     "ALTER TABLE coach_profile ADD COLUMN IF NOT EXISTS body_mode_week_count INTEGER",
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS review_date DATE",
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS readiness_score INTEGER",
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS readiness_details_json TEXT",
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS plan_week_start DATE",
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS workflow_status VARCHAR NOT NULL DEFAULT 'complete'",
+    "ALTER TABLE reports ADD COLUMN IF NOT EXISTS workflow_error TEXT",
+    "CREATE INDEX IF NOT EXISTS ix_reports_review_date ON reports (review_date)",
+    "CREATE INDEX IF NOT EXISTS ix_reports_workflow_status ON reports (workflow_status)",
+    "ALTER TABLE plan_days ADD COLUMN IF NOT EXISTS published_payload_hash VARCHAR",
+    "ALTER TABLE plan_days ADD COLUMN IF NOT EXISTS delivery_status VARCHAR NOT NULL DEFAULT 'pending'",
+    "ALTER TABLE plan_days ADD COLUMN IF NOT EXISTS delivery_error TEXT",
+    "ALTER TABLE plan_days ADD COLUMN IF NOT EXISTS published_at TIMESTAMP WITH TIME ZONE",
+    "CREATE INDEX IF NOT EXISTS ix_plan_days_delivery_status ON plan_days (delivery_status)",
     """DO $$
     BEGIN
         IF NOT EXISTS (
