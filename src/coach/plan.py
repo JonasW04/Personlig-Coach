@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, timedelta
 from typing import Literal
 
@@ -10,9 +11,12 @@ from sqlalchemy import select
 
 from coach import body_mode, focus, rules
 from coach.agents.gemini import run_once
+from coach.config import settings
 from coach.db import SessionLocal
 from coach.models import PlanDay, RecoveryRule, TrainingBlock
 from coach.web import stats
+
+log = logging.getLogger("coach.plan")
 
 
 class PlanGenerationError(ValueError):
@@ -74,6 +78,16 @@ def _extract_week(raw: str, week_start: date) -> GeneratedWeek:
     start = raw.find("{")
     end = raw.rfind("}")
     if start < 0 or end < start:
+        log.warning(
+            "plan generation returned no JSON object (%d chars): %r",
+            len(raw),
+            raw[:500],
+        )
+        if not raw.strip():
+            raise PlanGenerationError(
+                "Coach returned an empty response — it likely ran out of token "
+                "budget while reasoning. Try again."
+            )
         raise PlanGenerationError("Coach did not return a JSON plan")
     try:
         week = GeneratedWeek.model_validate_json(raw[start : end + 1])
@@ -261,7 +275,10 @@ when the session is not specifically running, cycling, or walking. Omit or use n
 
 async def _generate(week_start: date, block_context: dict | None = None) -> GeneratedWeek:
     try:
-        raw = await run_once(_prompt(week_start, block_context), max_tokens=4096)
+        raw = await run_once(
+            _prompt(week_start, block_context),
+            max_tokens=settings.coach_plan_max_tokens,
+        )
     except Exception as exc:
         raise PlanGenerationError("Coach could not generate a plan") from exc
     return _extract_week(raw, week_start)

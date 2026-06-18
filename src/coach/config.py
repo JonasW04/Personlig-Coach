@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # action-plan extraction).
     coach_utility_model: str = "gemini-3.5-flash"
     coach_reasoning_effort: str = "high"
+    # Output-token budget for week-plan generation. With reasoning_effort="high",
+    # max_tokens caps reasoning + the visible answer together, so a low cap can
+    # leave the model out of budget before it emits the JSON plan. The full
+    # seven-day structured plan is large, so keep this generous.
+    coach_plan_max_tokens: int = 16384
 
     # Email notifications (SMTP). For Gmail, use an App Password as smtp_password.
     smtp_host: str = ""
