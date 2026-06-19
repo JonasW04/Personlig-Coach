@@ -49,7 +49,6 @@
       </div>
       <div class="toptabs">${tabs}</div>
       <div class="appbar-actions">
-        <button class="iconbtn" data-action="tab" data-tab="reviews" title="Reviews">${I.file(19)}</button>
         <button class="iconbtn" data-action="settings" title="Settings">${I.gear(19)}</button>
       </div>`;
   }
@@ -1002,11 +1001,21 @@
       const j = await r.json();
       const list = $("#reviews-list", root);
       if (!j.reports || !j.reports.length) { list.innerHTML = `<div class="card muted">No ${reviewKind} reports yet. Generate one above.</div>`; return; }
-      list.innerHTML = j.reports.map((rep) => {
-        const dt = rep.created_at ? new Date(rep.created_at).toLocaleString() : "";
+      const item = (rep, i) => {
+        const d = rep.created_at ? new Date(rep.created_at) : null;
+        const dt = d ? d.toLocaleString() : "";
+        const rel = i === 0 ? "Most recent" : (d ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : `#${i + 1}`);
         const body = window.marked ? marked.parse(rep.content || "") : esc(rep.content || "");
-        return `<div class="card"><p class="label-mono" style="margin-bottom:8px">${esc(dt)}</p><div class="sec" style="font-size:13px;line-height:1.55">${body}</div></div>`;
-      }).join("");
+        return `<details class="review-item card"${i === 0 ? " open" : ""}>
+          <summary class="review-summary">
+            <span class="review-label">${esc(rel)}</span>
+            <span class="label-mono review-date">${esc(dt)}</span>
+            ${I.chevronLeft(16)}
+          </summary>
+          <div class="sec review-body" style="font-size:13px;line-height:1.55">${body}</div>
+        </details>`;
+      };
+      list.innerHTML = j.reports.map(item).join("");
     } catch { const list = $("#reviews-list", root); if (list) list.innerHTML = `<div class="card muted">Could not load reports.</div>`; }
   }
 
