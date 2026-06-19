@@ -26,10 +26,12 @@ MEMORY_TOOLS = [
     ToolSpec(
         name="remember",
         description=(
-            "Save a durable fact about the athlete to long-term memory (an injury, "
-            "a dietary preference, a target event/date, equipment limits, a standing "
-            "constraint). Use this whenever they tell you something worth keeping in "
-            "mind for future coaching."
+            "Save a fact about the athlete to long-term memory that should shape future "
+            "coaching: health/status (illness, pain, soreness, injuries, fatigue, poor "
+            "sleep, stress), life/schedule (travel, time constraints, equipment access), "
+            "or preferences/constraints (diet, exercises they love/avoid, target events). "
+            "Call this PROACTIVELY the moment such a detail comes up — do not wait for the "
+            "athlete to say 'remember this'. When in doubt, save it."
         ),
         parameters=object_schema(
             {"note": {"type": "string"}},

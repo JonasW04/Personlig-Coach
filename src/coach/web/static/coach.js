@@ -107,6 +107,10 @@
       case "sync": return runSync();
       case "rev-kind": reviewKind = t.dataset.kind; return nav("reviews");
       case "rev-generate": return generateReview();
+      case "chat-new": return chatStartNew();
+      case "chat-open": return chatOpen(t.dataset.cid);
+      case "chat-delete": e.stopPropagation(); return chatDelete(t.dataset.cid);
+      case "chat-toggle-history": return $("#chat-sidebar")?.classList.toggle("open");
       case "replan-today": return replanToday();
       case "regenerate-week": return regenerateWeek();
       case "open-day": {
@@ -1019,29 +1023,90 @@
     } catch { const list = $("#reviews-list", root); if (list) list.innerHTML = `<div class="card muted">Could not load reports.</div>`; }
   }
 
-  // ----- Chat (live /api/chat streaming ndjson)
-  function chatSession() {
-    let id = localStorage.getItem("coach.sid");
-    if (!id) { id = "web-" + Math.random().toString(36).slice(2, 10); localStorage.setItem("coach.sid", id); }
-    return id;
+  // ----- Chat (live /api/chat streaming ndjson, multi-conversation)
+  // activeChatId is page-session state, not persisted: a reload starts a fresh
+  // chat, but navigating around within a session keeps the chat you were using.
+  let activeChatId = null;
+  const CHAT_GREETING = "Morning. Ask me anything about today's plan, your recovery, or this week.";
+  const chatNewId = () => "web-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  const chatAdd = (msgs, role, text) => {
+    const d = document.createElement("div");
+    d.className = "msg " + role;
+    d.innerHTML = role === "assistant" && window.marked ? marked.parse(text) : esc(text);
+    msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight; return d;
+  };
+  function chatRelTime(iso) {
+    if (!iso) return "";
+    const d = new Date(iso), now = new Date(), diff = (now - d) / 1000;
+    if (diff < 60) return "now";
+    if (diff < 3600) return Math.floor(diff / 60) + "m";
+    if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  function chatRenderGreeting() {
+    const msgs = $("#chat-msgs"); if (!msgs) return;
+    msgs.innerHTML = ""; chatAdd(msgs, "assistant", CHAT_GREETING);
+  }
+  async function chatLoadMessages(id) {
+    const msgs = $("#chat-msgs"); if (!msgs) return;
+    msgs.innerHTML = "";
+    try {
+      const j = await (await fetch(`/api/chats/${id}/messages`)).json();
+      const list = j.messages || [];
+      if (!list.length) chatAdd(msgs, "assistant", CHAT_GREETING);
+      else list.forEach((m) => chatAdd(msgs, m.role, m.content));
+    } catch { chatAdd(msgs, "assistant", CHAT_GREETING); }
+  }
+  async function chatLoadHistory() {
+    const el = $("#chat-history"); if (!el) return;
+    try {
+      const j = await (await fetch("/api/chats?limit=50")).json();
+      const chats = j.chats || [];
+      if (!chats.length) { el.innerHTML = `<div class="muted chat-history-empty">No past chats yet.</div>`; return; }
+      el.innerHTML = chats.map((c) => `
+        <div class="chat-history-item ${c.id === activeChatId ? "active" : ""}" data-action="chat-open" data-cid="${esc(c.id)}">
+          <div class="chat-history-meta">
+            <span class="chat-history-title">${esc(c.title || "New chat")}</span>
+            <span class="chat-history-time">${esc(chatRelTime(c.updated_at))}</span>
+          </div>
+          <button class="chat-history-del" data-action="chat-delete" data-cid="${esc(c.id)}" aria-label="Delete chat">${I.trash(14)}</button>
+        </div>`).join("");
+    } catch { el.innerHTML = `<div class="muted chat-history-empty">Couldn't load chats.</div>`; }
+  }
+  function chatStartNew() {
+    activeChatId = null;
+    chatRenderGreeting();
+    chatLoadHistory();
+    $("#chat-sidebar")?.classList.remove("open");
+    $("#chat-input")?.focus();
+  }
+  function chatOpen(id) {
+    if (!id) return;
+    activeChatId = id;
+    chatLoadMessages(id);
+    chatLoadHistory();
+    $("#chat-sidebar")?.classList.remove("open");
+  }
+  async function chatDelete(id) {
+    try { await fetch(`/api/chats/${id}`, { method: "DELETE" }); } catch {}
+    if (id === activeChatId) chatStartNew();
+    else chatLoadHistory();
   }
   function wireChat(root) {
-    const msgs = $("#chat-msgs", root), form = $("#composer", root), input = $("#chat-input", root);
-    const sid = chatSession();
-    const add = (role, text) => { const d = document.createElement("div"); d.className = "msg " + role; d.innerHTML = role === "assistant" && window.marked ? marked.parse(text) : esc(text); msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight; return d; };
-    // load history
-    fetch(`/api/chats/${sid}/messages`).then((r) => r.json()).then((j) => {
-      (j.messages || []).forEach((m) => add(m.role, m.content));
-      if (!j.messages || !j.messages.length) add("assistant", "Morning. Ask me anything about today's plan, your recovery, or this week.");
-    }).catch(() => add("assistant", "Morning. Ask me anything about today's plan, your recovery, or this week."));
+    const form = $("#composer", root), input = $("#chat-input", root);
+    if (activeChatId) chatLoadMessages(activeChatId); else chatRenderGreeting();
+    chatLoadHistory();
 
     input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 140) + "px"; });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const text = input.value.trim(); if (!text) return;
       input.value = ""; input.style.height = "auto";
-      add("user", text);
-      const out = add("assistant", "");
+      if (!activeChatId) activeChatId = chatNewId();
+      const sid = activeChatId;
+      const msgs = $("#chat-msgs", root);
+      chatAdd(msgs, "user", text);
+      const out = chatAdd(msgs, "assistant", "");
       let acc = "";
       try {
         const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, session_id: sid }) });
@@ -1061,6 +1126,7 @@
           }
         }
       } catch { out.textContent = "Connection error. Try again."; }
+      chatLoadHistory();
     });
   }
 

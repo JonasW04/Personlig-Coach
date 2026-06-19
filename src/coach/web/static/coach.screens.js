@@ -427,11 +427,18 @@ window.SCREENS = (() => {
   // ------------------------------------------------------------------- Chat
   function chat() {
     return `
-      <div class="chat-msgs" id="chat-msgs"></div>
-      <form class="composer" id="composer">
-        <textarea id="chat-input" rows="1" placeholder="Ask your coach…" autocomplete="off"></textarea>
-        <button type="submit" aria-label="Send">➤</button>
-      </form>`;
+      <aside class="chat-sidebar" id="chat-sidebar">
+        <button class="btn btn-outline btn-block" data-action="chat-new">${I.plus(15)} New chat</button>
+        <div class="chat-history" id="chat-history"><div class="muted" style="padding:8px">Loading…</div></div>
+      </aside>
+      <div class="chat-main">
+        <button class="chat-history-toggle mobile-only" data-action="chat-toggle-history" aria-label="Chat history">${I.message(18)} History</button>
+        <div class="chat-msgs" id="chat-msgs"></div>
+        <form class="composer" id="composer">
+          <textarea id="chat-input" rows="1" placeholder="Ask your coach…" autocomplete="off"></textarea>
+          <button type="submit" aria-label="Send">➤</button>
+        </form>
+      </div>`;
   }
 
   return { today, plan, builder, actual, paDetailHtml, rules, memory, goals, notifications, chat };
