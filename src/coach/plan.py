@@ -14,7 +14,7 @@ from coach.config import settings
 from coach.integrations import hevy
 from coach.llm import TruncatedCompletion, complete
 from coach.db import SessionLocal
-from coach.models import PlanDay, RecoveryRule, TrainingBlock
+from coach.models import PlanDay, RecoveryRule
 from coach.web import stats
 
 log = logging.getLogger("coach.plan")
@@ -178,9 +178,7 @@ def _payload(item: GeneratedDay) -> dict:
     return payload
 
 
-def _persist(
-    week: GeneratedWeek, replace_from: date, block_id: int | None = None
-) -> list[PlanDay]:
+def _persist(week: GeneratedWeek, replace_from: date) -> list[PlanDay]:
     week_end = max(item.date for item in week.days)
     rows = [item for item in week.days if item.date >= replace_from]
     with SessionLocal() as session:
@@ -202,7 +200,6 @@ def _persist(
                     status="planned",
                     delivery_status="not_applicable" if item.kind == "rest" else "pending",
                     payload_json=payload_json,
-                    block_id=block_id,
                 ))
                 continue
 
@@ -214,7 +211,6 @@ def _persist(
             row.kind = item.kind
             row.title = item.title
             row.payload_json = payload_json
-            row.block_id = block_id
             if changed:
                 row.status = "planned"
                 row.delivery_status = "not_applicable" if item.kind == "rest" else "pending"
@@ -254,34 +250,8 @@ def plan_day_json(day: PlanDay) -> dict:
         "delivery_error": day.delivery_error,
         "published_at": day.published_at.isoformat() if day.published_at else None,
         "payload_json": payload,
-        "block_id": day.block_id,
         "created_at": day.created_at.isoformat() if day.created_at else None,
         "updated_at": day.updated_at.isoformat() if day.updated_at else None,
-    }
-
-
-def _active_block_context(for_date: date) -> dict | None:
-    with SessionLocal() as session:
-        block = session.execute(
-            select(TrainingBlock).where(TrainingBlock.active.is_(True))
-        ).scalars().first()
-    if block is None:
-        return None
-    try:
-        phases = json.loads(block.phases_json or "[]")
-    except json.JSONDecodeError:
-        phases = []
-    week = max(1, min(len(phases), ((for_date - block.start_date).days // 7) + 1))
-    phase = next((item for item in phases if item.get("week") == week), None)
-    return {
-        "id": block.id,
-        "name": block.name,
-        "goal": block.goal,
-        "week": week,
-        "total_weeks": len(phases),
-        "phase": phase,
-        "focus": block.focus,
-        "deload": block.deload,
     }
 
 
@@ -325,7 +295,6 @@ def _exercise_catalog() -> list[dict]:
 
 def _prompt(
     week_start: date,
-    block_context: dict | None = None,
     review_context: dict | None = None,
     exercise_catalog: list[dict] | None = None,
     planning_from: date | None = None,
@@ -352,7 +321,6 @@ def _prompt(
         "focus": focus.current_directive(),
         "latest_recovery": latest_health,
         "recent_training": recent.get("days", []),
-        "active_training_block": block_context,
         "recovery_rules": _recovery_rules_context(latest_health),
         "body_mode": body_mode.get_body_mode(),
         "review_context": review_context,
@@ -361,8 +329,8 @@ def _prompt(
         "preserved_completed_days": preserved,
     }
     return f"""Create a seven-day training plan for {week_start.isoformat()} through {week_end.isoformat()}.
-Use the supplied focus, body mode, active training-block phase, recovery guardrails, latest recovery state, and recent completed training.
-Bias weekly volume and intensity toward the block phase and its sets-per-muscle-group target. Coach is a planner,
+Use the supplied focus, body mode, recovery guardrails, latest recovery state, and recent completed training.
+Coach is a planner,
 not a workout tracker: produce planned sessions only and do not add logging or timer instructions. Respect every
 enabled recovery guardrail; apply the structured action when a numeric guardrail is triggered. Apply the body mode's
 descriptor and suggested bias when choosing training volume, cardio demand, and recovery trade-offs.
@@ -400,7 +368,6 @@ specifically running, cycling, or walking. Use null (not a placeholder string) f
 
 async def _generate(
     week_start: date,
-    block_context: dict | None = None,
     review_context: dict | None = None,
     planning_from: date | None = None,
 ) -> GeneratedWeek:
@@ -414,7 +381,6 @@ async def _generate(
         raw = await complete(
             _prompt(
                 week_start,
-                block_context,
                 review_context,
                 exercise_catalog,
                 planning_from,
@@ -446,19 +412,17 @@ async def generate_week(
     week_start: date, *, review_context: dict | None = None
 ) -> list[PlanDay]:
     week_start = week_start_for(week_start)
-    block_context = _active_block_context(week_start)
     generated = await _generate(
-        week_start, block_context, review_context, planning_from=week_start
+        week_start, review_context, planning_from=week_start
     )
-    return _persist(generated, week_start, block_context["id"] if block_context else None)
+    return _persist(generated, week_start)
 
 
 async def replan_from(
     from_date: date, *, review_context: dict | None = None
 ) -> list[PlanDay]:
     week_start = week_start_for(from_date)
-    block_context = _active_block_context(week_start)
     generated = await _generate(
-        week_start, block_context, review_context, planning_from=from_date
+        week_start, review_context, planning_from=from_date
     )
-    return _persist(generated, from_date, block_context["id"] if block_context else None)
+    return _persist(generated, from_date)

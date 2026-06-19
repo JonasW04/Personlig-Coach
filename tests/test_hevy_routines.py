@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from coach.integrations import hevy
-from coach.models import PlanDay, TrainingBlock
+from coach.models import PlanDay
 from coach.web import app as web_app
 
 
@@ -190,7 +190,6 @@ class TestPushHevyEndpoint(unittest.IsolatedAsyncioTestCase):
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        TrainingBlock.__table__.create(self.engine)
         PlanDay.__table__.create(self.engine)
         self.session_factory = sessionmaker(
             bind=self.engine,

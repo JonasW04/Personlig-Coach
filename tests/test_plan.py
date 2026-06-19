@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from coach import plan
-from coach.models import CoachProfile, PlanDay, RecoveryRule, TrainingBlock
+from coach.models import CoachProfile, PlanDay, RecoveryRule
 
 
 WEEK_START = date(2026, 6, 15)
@@ -67,7 +67,6 @@ def generated_week(prefix: str = "New") -> str:
 class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-        TrainingBlock.__table__.create(self.engine)
         RecoveryRule.__table__.create(self.engine)
         CoachProfile.__table__.create(self.engine)
         PlanDay.__table__.create(self.engine)
@@ -145,21 +144,8 @@ class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
             rows = session.execute(select(PlanDay)).scalars().all()
         self.assertEqual(["Keep me"], [row.title for row in rows])
 
-    async def test_active_block_guides_plan_and_links_generated_days(self):
+    async def test_recovery_rules_and_body_mode_guide_plan(self):
         with self.session_factory() as session:
-            block = TrainingBlock(
-                name="Summer strength",
-                goal="strength",
-                start_date=WEEK_START,
-                end_date=WEEK_START + timedelta(weeks=6) - timedelta(days=1),
-                phases_json=json.dumps(
-                    [{"week": i, "label": "Intensify", "sets": 16 + i} for i in range(1, 7)]
-                ),
-                focus="Crisp compounds.",
-                deload="Absorb the work.",
-                active=True,
-            )
-            session.add(block)
             session.add_all(
                 [
                     RecoveryRule(
@@ -183,7 +169,6 @@ class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
                 ]
             )
             session.commit()
-            block_id = block.id
 
         with (
             patch.object(plan.stats, "health", return_value={"days": [{"training_readiness": 42}]}),
@@ -191,12 +176,9 @@ class TestPlanEngine(unittest.IsolatedAsyncioTestCase):
             patch.object(plan.focus, "current_directive", return_value="Build strength."),
             patch.object(plan, "complete", new=AsyncMock(return_value=generated_week())) as run,
         ):
-            rows = await plan.generate_week(WEEK_START)
+            await plan.generate_week(WEEK_START)
 
-        self.assertTrue(all(row.block_id == block_id for row in rows))
         prompt = run.await_args.args[0]
-        self.assertIn('"active_training_block"', prompt)
-        self.assertIn('"sets": 17', prompt)
         self.assertIn('"label": "Strength before cardio"', prompt)
         self.assertIn('"label": "Low readiness"', prompt)
         self.assertIn('"triggered": true', prompt)

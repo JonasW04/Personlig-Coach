@@ -19,7 +19,6 @@
       <section class="screen" id="screen-plan"></section>
       <section class="screen" id="screen-builder"></section>
       <section class="screen" id="screen-actual"></section>
-      <section class="screen" id="screen-blocks"></section>
       <section class="screen" id="screen-rules"></section>
       <section class="screen" id="screen-memory"></section>
       <section class="screen" id="screen-goals"></section>
@@ -33,25 +32,7 @@
 
   <div class="toast" id="toast"></div>
 
-  <dialog class="block-modal" id="block-modal">
-    <form id="block-form">
-      <div class="between">
-        <div><div class="eyebrow">Periodization</div><h2 class="screen-title">New training block</h2></div>
-        <button class="iconbtn" type="button" data-action="close-block-modal" aria-label="Close">×</button>
-      </div>
-      <div class="block-form-grid">
-        <label>Name<input class="input" name="name" type="text" maxlength="200" required /></label>
-        <label>Goal<select class="input" name="goal"><option value="hypertrophy">Hypertrophy</option><option value="strength">Strength</option><option value="endurance">Endurance</option><option value="general">General</option></select></label>
-        <label>Start date<input class="input" id="block-start" name="start_date" type="date" required /></label>
-        <label>Weeks<input class="input" name="weeks" type="number" min="2" max="16" value="6" required /></label>
-      </div>
-      <label class="block-check"><input name="include_deload" type="checkbox" checked /> Include final deload week</label>
-      <div class="statusline" id="block-form-status" aria-live="polite"></div>
-      <div class="row block-form-actions"><button class="btn btn-outline" type="button" data-action="close-block-modal">Cancel</button><button class="btn btn-primary" type="submit">Create block</button></div>
-    </form>
-  </dialog>
-
-  <dialog class="block-modal" id="rule-modal">
+  <dialog class="modal" id="rule-modal">
     <form id="rule-form">
       <div class="between">
         <div><div class="eyebrow">Guardrails</div><h2 class="screen-title">New recovery rule</h2></div>
@@ -65,7 +46,7 @@
         <label>Action<select class="input" name="action"><option value="rest">Rest</option><option value="swap_to_zone2">Swap to Zone 2</option><option value="reduce_volume">Reduce volume</option><option value="cap_intensity">Cap intensity</option></select></label>
       </div>
       <div class="statusline" id="rule-form-status" aria-live="polite"></div>
-      <div class="row block-form-actions"><button class="btn btn-outline" type="button" data-action="close-rule-modal">Cancel</button><button class="btn btn-primary" type="submit">Create rule</button></div>
+      <div class="row form-actions"><button class="btn btn-outline" type="button" data-action="close-rule-modal">Cancel</button><button class="btn btn-primary" type="submit">Create rule</button></div>
     </form>
   </dialog>
 

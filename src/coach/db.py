@@ -50,22 +50,6 @@ _COLUMN_MIGRATIONS = [
     "ALTER TABLE plan_days ADD COLUMN IF NOT EXISTS delivery_error TEXT",
     "ALTER TABLE plan_days ADD COLUMN IF NOT EXISTS published_at TIMESTAMP WITH TIME ZONE",
     "CREATE INDEX IF NOT EXISTS ix_plan_days_delivery_status ON plan_days (delivery_status)",
-    """DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1
-            FROM pg_constraint c
-            JOIN pg_attribute a
-              ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-            WHERE c.conrelid = 'plan_days'::regclass
-              AND c.contype = 'f'
-              AND a.attname = 'block_id'
-        ) THEN
-            ALTER TABLE plan_days
-            ADD CONSTRAINT fk_plan_days_block_id
-            FOREIGN KEY (block_id) REFERENCES training_blocks(id);
-        END IF;
-    END $$""",
 ]
 
 

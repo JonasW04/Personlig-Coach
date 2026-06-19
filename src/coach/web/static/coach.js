@@ -17,7 +17,6 @@
     today: { tab: "today", render: S.today, after: wireToday },
     plan: { tab: "plan", sub: "plan", render: S.plan, after: wirePlan },
     builder: { tab: "plan", sub: "plan", render: S.builder, after: wireBuilder },
-    blocks: { tab: "plan", sub: "plan", render: S.blocks, after: wireBlocks },
     actual: { tab: "activity", render: S.actual, after: wireActual },
     goals: { tab: "health", sub: "health", render: S.goals, after: wireGoals },
     rules: { tab: "health", sub: "health", render: S.rules, after: wireRules },
@@ -32,7 +31,7 @@
   ];
   const TAB_DEFAULT = { today: "today", plan: "plan", activity: "actual", health: "goals", reviews: "reviews", chat: "chat" };
   const SUBNAV = {
-    plan: [["plan", "Week"], ["builder", "Workout"], ["blocks", "Blocks"]],
+    plan: [["plan", "Week"], ["builder", "Workout"]],
     health: [["goals", "Body Mode"], ["rules", "Recovery Rules"]],
     settings: [["notifications", "Notifications"], ["rules", "Recovery Rules"], ["memory", "Coach Memory"]],
   };
@@ -111,8 +110,6 @@
       case "rev-generate": return generateReview();
       case "replan-today": return replanToday();
       case "regenerate-week": return regenerateWeek();
-      case "new-block": return openBlockModal();
-      case "close-block-modal": return closeBlockModal();
       case "swap-exercise": return toast("Pick a replacement exercise");
       case "open-day": {
         const pa = STATE.planVsActual;
@@ -312,48 +309,6 @@
 
   function closeRuleModal() {
     const dialog = $("#rule-modal");
-    if (dialog.open) dialog.close();
-  }
-
-  async function wireBlocks(root) {
-    const render = () => {
-      root.innerHTML = S.blocks().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("plan", "blocks")}`);
-    };
-    // Honest empty/error states — never show fabricated sample data, which looks
-    // like a real (but wrong) training block with stale phases and dates.
-    const placeholder = (title, body, showNew) => {
-      root.innerHTML = `<div class="screen-inner">${subnavHtml("plan", "blocks")}
-        <div class="card" style="text-align:center;padding:32px 18px">
-          <p class="screen-title" style="margin-bottom:6px">${esc(title)}</p>
-          <p class="muted" style="margin-bottom:${showNew ? "16px" : "0"}">${esc(body)}</p>
-          ${showNew ? `<button class="btn btn-primary" data-action="new-block">New block</button>` : ""}
-        </div>
-      </div>`;
-    };
-    root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
-    try {
-      const response = await fetch("/api/blocks");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      if (!data.active || !Array.isArray(data.active.phases) || !data.active.phases.length) {
-        return placeholder("No training block yet", "Create a periodized training block to structure your phases over the coming weeks.", true);
-      }
-      STATE.trainingBlock = data.active;
-      render();
-    } catch {
-      placeholder("Couldn't load your training block", "Something went wrong reaching the server. Check your connection and try again.", false);
-    }
-  }
-
-  function openBlockModal() {
-    const dialog = $("#block-modal");
-    $("#block-start").value = localIso();
-    $("#block-form-status").textContent = "";
-    dialog.showModal();
-  }
-
-  function closeBlockModal() {
-    const dialog = $("#block-modal");
     if (dialog.open) dialog.close();
   }
 
@@ -1102,36 +1057,6 @@
   }
 
   // boot
-  const blockForm = $("#block-form");
-  if (blockForm) blockForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const submit = form.querySelector('button[type="submit"]');
-    const status = $("#block-form-status");
-    submit.disabled = true;
-    status.textContent = "Creating block…";
-    try {
-      const response = await fetch("/api/blocks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.elements.name.value.trim(),
-          goal: form.elements.goal.value,
-          start_date: form.elements.start_date.value,
-          weeks: Number(form.elements.weeks.value),
-          include_deload: form.elements.include_deload.checked,
-        }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      closeBlockModal();
-      form.reset();
-      nav("blocks");
-    } catch {
-      status.textContent = "Could not create block.";
-    } finally {
-      submit.disabled = false;
-    }
-  });
   const ruleMetric = $("#rule-metric");
   const syncRuleCondition = () => {
     if (!ruleMetric) return;

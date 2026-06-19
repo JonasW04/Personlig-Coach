@@ -11,13 +11,12 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from coach import workout_delivery
-from coach.models import PlanDay, TrainingBlock
+from coach.models import PlanDay
 
 
 class TestWorkoutDelivery(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-        TrainingBlock.__table__.create(self.engine)
         PlanDay.__table__.create(self.engine)
         self.sessions = sessionmaker(bind=self.engine, future=True, expire_on_commit=False)
         self.session_patch = patch.object(workout_delivery, "SessionLocal", self.sessions)

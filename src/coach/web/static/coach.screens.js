@@ -284,59 +284,6 @@ window.SCREENS = (() => {
       <button class="btn btn-outline btn-block" style="margin-top:14px" data-action="open-day">Open full day ${window.ICONS.arrowRight(15)}</button>`;
   }
 
-  // ------------------------------------------------------------------- Training Blocks
-  function blocks() {
-    const b = STATE.trainingBlock;
-    const pct = Math.round((b.weekIndex / b.weekCount) * 100);
-    const deloadWeek = b.phases.findIndex((p) => p.state === "deload") + 1;
-    const deloadLabel = deloadWeek === 0
-      ? "NO DELOAD SCHEDULED"
-      : deloadWeek === b.weekIndex
-        ? "DELOAD THIS WEEK"
-        : `DELOAD IN ${deloadWeek - b.weekIndex} WEEK${deloadWeek - b.weekIndex === 1 ? "" : "S"}`;
-    const stateStyle = {
-      done: "border-color:rgba(70,201,139,.3);background:rgba(70,201,139,.07)",
-      current: "border-color:rgba(79,140,255,.6);background:rgba(79,140,255,.08);box-shadow:0 0 0 3px rgba(79,140,255,.1)",
-      planned: "opacity:.55",
-      deload: "border-style:dashed;border-color:var(--rest);background:rgba(155,140,255,.06)",
-    };
-    const stateTag = { done: pill("green", "✓ DONE"), current: pill("blue", "CURRENT", true), planned: pill("muted", "PLANNED"), deload: pill("violet", "DELOAD") };
-    const timeline = b.phases.map((p) => `
-      <div class="tile" style="${stateStyle[p.state]};text-align:center">
-        <div class="label-mono">${esc(p.wk)}</div>
-        <div style="font-weight:700;margin:6px 0;font-size:13px;color:${p.state === "current" ? "var(--strength-lighter)" : p.state === "deload" ? "var(--rest-light)" : "var(--text-primary)"}">${esc(p.phase)}</div>
-        <div class="muted" style="font-size:11px;margin-bottom:8px">${p.sets} sets/mg</div>
-        ${stateTag[p.state]}
-      </div>`).join("");
-
-    const maxSets = Math.max(...b.phases.map((p) => p.sets));
-    const chart = `<div class="vbars" style="margin-top:22px">${b.phases.map((p) => `<div class="vb ${p.state === "current" ? "hi" : ""} ${p.state === "deload" ? "violet" : ""}" style="height:${(p.sets / maxSets) * 100}%"><span>${p.sets}</span></div>`).join("")}</div>
-      <div class="row" style="margin-top:6px">${b.phases.map((p) => `<div class="label-mono" style="flex:1;text-align:center">${esc(p.wk)}</div>`).join("")}</div>`;
-
-    const hero = `
-      <div class="card" style="border-radius:var(--r-hero);background:linear-gradient(140deg,rgba(79,140,255,.14),var(--surface-1))">
-        <div class="between"><span class="pill pill-blue">CURRENT BLOCK</span><span class="pill pill-green"><span class="dot live"></span>Active</span></div>
-        <h2 class="screen-title" style="margin-top:12px">${esc(b.name)}</h2>
-        <div class="muted" style="font-size:12px;margin-top:4px">${esc(b.sub)}</div>
-        <div class="between" style="margin-top:14px"><span class="label-mono">WEEK ${b.weekIndex} / ${b.weekCount}</span><span class="sec" style="font-weight:700">${pct}% complete</span></div>
-        <div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div>
-      </div>`;
-
-    return `<div class="screen-inner">
-      ${head("Training Blocks", "Periodization", `<button class="btn btn-secondary" data-action="new-block">${I.plus(15)} New block</button>`)}
-      ${hero}
-      <div class="grid3 desktop-only" style="grid-template-columns:repeat(6,1fr);margin-top:16px">${timeline}</div>
-      <div class="stack mobile-only" style="margin-top:16px">${timeline}</div>
-      <div class="cols c-1_3" style="margin-top:16px">
-        <div class="card"><p class="label-mono">PLANNED WEEKLY VOLUME · SETS/MUSCLE GROUP</p>${chart}</div>
-        <div class="stack">
-          <div class="card"><p class="label-mono">THIS WEEK'S FOCUS</p><div class="sec" style="margin-top:8px;font-size:12.5px;line-height:1.5">${esc(b.focus)}</div></div>
-          <div class="note-violet"><p class="label-mono" style="color:var(--rest-light)">${esc(deloadLabel)}</p><div style="margin-top:6px;font-size:12.5px;line-height:1.5">${esc(b.deload)}</div></div>
-        </div>
-      </div>
-    </div>`;
-  }
-
   // ------------------------------------------------------------------- Recovery Rules
   function rules() {
     const card = (r, i) => `
@@ -383,10 +330,7 @@ window.SCREENS = (() => {
           ${grp("prefers", "PREFERS", m.prefers, "chip-green")}
           ${grp("dislikes", "DISLIKES", m.dislikes, "", true)}
         </div>
-        <div class="grid2">
-          <div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(m.targetEvent.title)}</div><div class="muted" style="font-size:12px">${esc(m.targetEvent.meta)}</div></div>
-          <div class="card"><p class="label-mono">BODY GOAL</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(m.bodyGoal.title)}</div><div class="muted" style="font-size:12px">${esc(m.bodyGoal.meta)}</div></div>
-        </div>
+        <div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(m.targetEvent.title)}</div><div class="muted" style="font-size:12px">${esc(m.targetEvent.meta)}</div></div>
       </div>
     </div>`;
   }
@@ -411,10 +355,7 @@ window.SCREENS = (() => {
     const targets = `<div class="card"><p class="label-mono" style="margin-bottom:12px">WEEKLY TARGETS</p><div class="stack">${g.weeklyTargets.map(target).join("")}</div></div>`;
     const bias = `<div class="note-blue">${esc(g.bias)}</div>`;
     const trend = (label, t) => `<div class="card"><div class="between"><div><p class="label-mono">${esc(label)}</p><div class="big" style="font-size:22px;margin-top:4px">${esc(t.value)}</div></div><span class="pill ${label === "BODYWEIGHT" ? "pill-violet" : "pill-green"}">${esc(t.delta)}</span></div><div style="margin-top:10px">${spark(t.trend, t.color)}</div></div>`;
-    const eventCards = `<div class="grid2">
-      <div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(STATE.coachMemory.targetEvent.title)}</div><div class="muted" style="font-size:12px">${esc(STATE.coachMemory.targetEvent.meta)}</div></div>
-      <div class="card"><p class="label-mono">BODY GOAL</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(STATE.coachMemory.bodyGoal.title)}</div><div class="muted" style="font-size:12px">${esc(STATE.coachMemory.bodyGoal.meta)}</div></div>
-    </div>`;
+    const eventCards = `<div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(STATE.coachMemory.targetEvent.title)}</div><div class="muted" style="font-size:12px">${esc(STATE.coachMemory.targetEvent.meta)}</div></div>`;
 
     return `<div class="screen-inner">
       ${head("Goals & Body Mode", "Coaching mode")}
@@ -487,5 +428,5 @@ window.SCREENS = (() => {
       </form>`;
   }
 
-  return { today, plan, builder, actual, paDetailHtml, blocks, rules, memory, goals, notifications, chat };
+  return { today, plan, builder, actual, paDetailHtml, rules, memory, goals, notifications, chat };
 })();

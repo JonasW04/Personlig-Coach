@@ -110,22 +110,6 @@ window.STATE = {
     },
   },
 
-  trainingBlock: {
-    name: "Hypertrophy — Summer Cut",
-    sub: "6-week block · Jun 1 – Jul 12 · paired with Cut body mode",
-    weekIndex: 3, weekCount: 6,
-    phases: [
-      { wk: "W1", phase: "Accumulate", state: "done", sets: 18 },
-      { wk: "W2", phase: "Accumulate", state: "done", sets: 20 },
-      { wk: "W3", phase: "Intensify", state: "current", sets: 22 },
-      { wk: "W4", phase: "Intensify", state: "planned", sets: 24 },
-      { wk: "W5", phase: "Peak", state: "planned", sets: 24 },
-      { wk: "W6", phase: "Deload", state: "deload", sets: 12 },
-    ],
-    focus: "Push intensity on compounds while holding total volume. RPE targets climb to 8–9 on top sets.",
-    deload: "Deload in 3 weeks — volume drops ~50%, intensity held. A planned recovery week to consolidate gains.",
-  },
-
   recoveryRules: [
     { label: "No heavy legs under 60 readiness", description: "Skip or swap heavy lower-body work on low-recovery days.", enabled: true, threshold: 60 },
     { label: "Avoid hard running within 24h of heavy squats", description: "Protects legs from compounding fatigue.", enabled: true },
@@ -162,7 +146,6 @@ window.STATE = {
     prefers: ["Free weights", "Pull-ups"],
     dislikes: ["Burpees", "Leg press"],
     targetEvent: { title: "Half marathon", meta: "Oct 5 · 16 weeks out" },
-    bodyGoal: { title: "Cut to 13% BF", meta: "Hold strength · −0.4 kg/wk" },
   },
 
   bodyMode: {

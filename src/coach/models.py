@@ -229,27 +229,6 @@ class ActionItem(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class TrainingBlock(Base):
-    """A periodized training block with one active block at a time."""
-
-    __tablename__ = "training_blocks"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String)
-    goal: Mapped[str] = mapped_column(String)
-    start_date: Mapped[date] = mapped_column(Date)
-    end_date: Mapped[date] = mapped_column(Date)
-    body_mode: Mapped[str | None] = mapped_column(String)
-    phases_json: Mapped[str] = mapped_column(Text, default="[]")
-    focus: Mapped[str] = mapped_column(Text)
-    deload: Mapped[str] = mapped_column(Text)
-    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
-    )
-
-
 class RecoveryRule(Base):
     """A user-defined recovery or scheduling guardrail."""
 
@@ -285,7 +264,6 @@ class PlanDay(Base):
     delivery_error: Mapped[str | None] = mapped_column(Text)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
-    block_id: Mapped[int | None] = mapped_column(ForeignKey("training_blocks.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
