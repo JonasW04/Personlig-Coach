@@ -201,7 +201,6 @@ window.SCREENS = (() => {
       <div class="card"><p class="label-mono">COACH NOTES</p><div class="sec" style="margin-top:8px;font-size:12.5px;line-height:1.5">${esc(b.notes)}</div></div>
       <div class="card"><p class="label-mono" style="margin-bottom:10px">SESSION TARGETS</p>
         <div class="stack">${b.targets.map((t) => `<div class="between"><span class="muted" style="font-size:12px">${esc(t.label)}</span><span style="font-weight:700">${esc(t.value)}</span></div>`).join("")}</div></div>
-      <button class="btn btn-outline btn-block" data-action="swap-exercise">Swap an exercise ${I.arrowRight(15)}</button>
     </div>`;
 
     return `<div class="screen-inner">

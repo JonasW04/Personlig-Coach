@@ -110,7 +110,6 @@
       case "rev-generate": return generateReview();
       case "replan-today": return replanToday();
       case "regenerate-week": return regenerateWeek();
-      case "swap-exercise": return toast("Pick a replacement exercise");
       case "open-day": {
         const pa = STATE.planVsActual;
         const day = pa && pa.days[pa.selectedDay];
