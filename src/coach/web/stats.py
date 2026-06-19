@@ -27,7 +27,7 @@ def activity(start: str | None = None, end: str | None = None) -> dict:
     """Return ``{"days": [...]}`` — one entry per active day in the (optional) range.
 
     Each day: ``{date, strength|None, cardio|None}`` where strength is
-    ``{minutes, exercises:[{name, sets:[{reps, weight}]}]}`` and cardio is
+    ``{title, minutes, exercises:[{name, sets:[{reps, weight}]}]}`` and cardio is
     ``{type, minutes, km}``. Rest days are omitted.
     """
     start_d, end_d = _bounds(start, end)
@@ -68,8 +68,14 @@ def activity(start: str | None = None, end: str | None = None) -> dict:
                 minutes = round((w.end_time - w.start_time).total_seconds() / 60)
             cur = entry["strength"]
             if cur is None:
-                entry["strength"] = {"minutes": minutes, "exercises": exercises}
+                entry["strength"] = {
+                    "title": w.title,
+                    "minutes": minutes,
+                    "exercises": exercises,
+                }
             else:
+                if w.title and w.title != cur.get("title"):
+                    cur["title"] = " + ".join(filter(None, [cur.get("title"), w.title]))
                 cur["minutes"] += minutes
                 cur["exercises"].extend(exercises)
 

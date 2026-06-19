@@ -807,7 +807,7 @@
 
   function actualText(day) {
     const parts = [];
-    if (day.strength) parts.push(`Strength · ${day.strength.minutes || 0} min`);
+    if (day.strength) parts.push(`${day.strength.title || "Strength"} · ${day.strength.minutes || 0} min`);
     if (day.cardio) parts.push(`${day.cardio.type || "Cardio"} · ${day.cardio.km || 0} km · ${day.cardio.minutes || 0} min`);
     return parts.join(" + ") || "No session";
   }
