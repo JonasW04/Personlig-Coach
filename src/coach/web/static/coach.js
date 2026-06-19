@@ -38,6 +38,7 @@
   };
 
   let current = "today";
+  let requestedBuilderDate = null; // set when opening the workout view for a specific day
 
   function renderAppbar() {
     const tabs = TABS.map(([k, label, icon]) =>
@@ -113,7 +114,12 @@
       case "new-block": return openBlockModal();
       case "close-block-modal": return closeBlockModal();
       case "swap-exercise": return toast("Pick a replacement exercise");
-      case "open-day": return nav("actual");
+      case "open-day": {
+        const pa = STATE.planVsActual;
+        const day = pa && pa.days[pa.selectedDay];
+        if (day && day.kind === "strength") { requestedBuilderDate = day.date; return nav("builder"); }
+        return nav("plan");
+      }
       case "nudge-action": return toast(t.textContent.trim());
       case "toggle-rule": return toggleRule(t);
       case "toggle-pref": return togglePref(t);
@@ -744,9 +750,11 @@
       if (!planResponse.ok) throw new Error(`HTTP ${planResponse.status}`);
       const planData = await planResponse.json();
       const strength = (planData.days || []).filter((day) => day.kind === "strength");
-      const selected = strength.find((day) => day.date === localIso())
+      const selected = (requestedBuilderDate && strength.find((day) => day.date === requestedBuilderDate))
+        || strength.find((day) => day.date === localIso())
         || strength.find((day) => day.date > localIso())
         || strength[0];
+      requestedBuilderDate = null;
       if (!selected) {
         return placeholder("No workout to show yet", "Generate a seven-day training plan and your next strength workout will appear here.", true);
       }
@@ -845,6 +853,7 @@
       details[day.date] = {
         date: longDate(day.date),
         day: planDate(day.date).getDate(),
+        kind: day.kind,
         planned: plannedText(day),
         actual: actualText(actual),
         ac: color,
