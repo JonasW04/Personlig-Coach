@@ -338,11 +338,18 @@ window.SCREENS = (() => {
   // ------------------------------------------------------------------- Goals & Body Mode
   function goals() {
     const g = STATE.bodyMode;
+    const modeThemes = {
+      cut: { rgb: "255,107,74", pill: "pill-orange", text: "var(--cardio-lighter)" },
+      bulk: { rgb: "79,140,255", pill: "pill-blue", text: "var(--strength-lighter)" },
+      recomp: { rgb: "155,140,255", pill: "pill-violet", text: "var(--rest-light)" },
+      perf: { rgb: "70,201,139", pill: "pill-green", text: "#a9d9c2" },
+    };
+    const th = modeThemes[g.mode] || modeThemes.recomp;
     const seg = g.modes.map((m) => `<button class="${m.key === g.mode ? "active" : ""}" data-action="set-mode" data-mode="${m.key}">${esc(m.label)}</button>`).join("");
     const hero = `
-      <div class="card" style="border-radius:var(--r-hero);background:linear-gradient(140deg,rgba(155,140,255,.16),var(--surface-1))">
-        <div class="between"><span class="pill pill-violet">BODY MODE</span><span class="label-mono">WEEK ${g.weekIndex} / ${g.weekCount}</span></div>
-        <div class="hero-num" style="font-size:44px;color:var(--rest-light);margin-top:10px">${esc(g.modes.find((m) => m.key === g.mode).label)}</div>
+      <div class="card" style="border-radius:var(--r-hero);background:linear-gradient(140deg,rgba(${th.rgb},.16),var(--surface-1))">
+        <div class="between"><span class="pill ${th.pill}">BODY MODE</span><span class="label-mono">WEEK ${g.weekIndex} / ${g.weekCount}</span></div>
+        <div class="hero-num" style="font-size:44px;color:${th.text};margin-top:10px">${esc(g.modes.find((m) => m.key === g.mode).label)}</div>
         <div class="sec" style="font-size:12.5px;margin-top:6px;line-height:1.5">${esc(g.descriptor)}</div>
         <div class="segmented" style="margin-top:14px">${seg}</div>
       </div>`;
@@ -353,7 +360,7 @@ window.SCREENS = (() => {
         <div class="bar" style="margin-top:6px"><i style="width:${pct}%;background:${col}"></i></div></div>`;
     };
     const targets = `<div class="card"><p class="label-mono" style="margin-bottom:12px">WEEKLY TARGETS</p><div class="stack">${g.weeklyTargets.map(target).join("")}</div></div>`;
-    const bias = `<div class="note-blue">${esc(g.bias)}</div>`;
+    const bias = `<div style="border:1px solid rgba(${th.rgb},0.3);background:rgba(${th.rgb},0.08);border-radius:var(--r-card);padding:13px 14px;color:${th.text};font-size:12.5px">${esc(g.bias)}</div>`;
     const trend = (label, t) => `<div class="card"><div class="between"><div><p class="label-mono">${esc(label)}</p><div class="big" style="font-size:22px;margin-top:4px">${esc(t.value)}</div></div><span class="pill ${label === "BODYWEIGHT" ? "pill-violet" : "pill-green"}">${esc(t.delta)}</span></div><div style="margin-top:10px">${spark(t.trend, t.color)}</div></div>`;
     const eventCards = `<div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(STATE.coachMemory.targetEvent.title)}</div><div class="muted" style="font-size:12px">${esc(STATE.coachMemory.targetEvent.meta)}</div></div>`;
 
