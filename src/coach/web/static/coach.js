@@ -809,6 +809,20 @@
     return detail ? `${day.title} · ${detail}` : day.title;
   }
 
+  // A planned session counts as completed only when the matching-kind actual
+  // reaches a reasonable fraction of the planned volume. Doing a much shorter
+  // session (e.g. a 1.5 km jog instead of a planned 7.5 km run) is not "on plan".
+  function sessionMatches(day, actual) {
+    const payload = day.payload_json || {};
+    const done = actual[day.kind];
+    if (!done) return false;
+    const ratios = [];
+    if (payload.duration_minutes) ratios.push((done.minutes || 0) / payload.duration_minutes);
+    if (day.kind === "cardio" && payload.distance_km) ratios.push((done.km || 0) / payload.distance_km);
+    if (!ratios.length) return true; // no planned target to compare against
+    return ratios.every((r) => r >= 0.75);
+  }
+
   function mapPlanVsActual(planData, statsData) {
     const actualByDate = Object.fromEntries((statsData.days || []).map((day) => [day.date, day]));
     const today = localIso();
@@ -817,7 +831,7 @@
     const calendarDays = planData.days.map((day) => {
       const actual = actualByDate[day.date] || { strength: null, cardio: null };
       const hasActual = Boolean(actual.strength || actual.cardio);
-      const matching = day.kind !== "rest" && Boolean(actual[day.kind]);
+      const matching = day.kind !== "rest" && sessionMatches(day, actual);
       let status;
       if (day.kind === "rest") status = hasActual ? "REPLACED" : day.date <= today ? "ON PLAN" : "PLANNED";
       else if (matching) status = "ON PLAN";
