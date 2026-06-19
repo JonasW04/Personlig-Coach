@@ -11,8 +11,25 @@ from coach import memory
 from coach.tools.specs import ToolSpec, object_schema
 
 
+MEMORY_CATEGORIES = (
+    "injuries",
+    "schedule",
+    "equipment",
+    "prefers",
+    "dislikes",
+    "target_event",
+    "health",
+    "note",
+)
+
+
 async def remember(args) -> dict:
-    saved = memory.add_memory((args.get("note") or "").strip(), source="chat")
+    category = (args.get("category") or "note").strip().lower() or "note"
+    if category not in MEMORY_CATEGORIES:
+        category = "note"
+    saved = memory.add_memory(
+        (args.get("note") or "").strip(), source="chat", category=category
+    )
     if saved is None:
         return {"error": "Nothing to remember — note was empty."}
     return {"saved": True, "memory": saved}
@@ -34,7 +51,21 @@ MEMORY_TOOLS = [
             "athlete to say 'remember this'. When in doubt, save it."
         ),
         parameters=object_schema(
-            {"note": {"type": "string"}},
+            {
+                "note": {"type": "string"},
+                "category": {
+                    "type": "string",
+                    "enum": list(MEMORY_CATEGORIES),
+                    "description": (
+                        "Bucket this memory: 'injuries' (pain/injury/soreness), "
+                        "'schedule' (travel/time constraints/availability), 'equipment' "
+                        "(gym/home gear access), 'prefers' (exercises/styles they like), "
+                        "'dislikes' (exercises they avoid), 'target_event' (a race/event "
+                        "and date), 'health' (illness/fatigue/sleep/stress), or 'note' "
+                        "for anything else."
+                    ),
+                },
+            },
             required=["note"],
         ),
         handler=remember,

@@ -8,7 +8,6 @@
   const bodyModeStaticJson = JSON.stringify(window.STATE.bodyMode);
   const notificationPrefsStaticJson = JSON.stringify(window.STATE.notificationPrefs);
   const pushNotificationsStaticJson = JSON.stringify(window.STATE.pushNotifications);
-  const memoryStaticJson = JSON.stringify(window.STATE.coachMemory);
   let memoryIds = {};
   let pushRegistration = null;
 
@@ -126,7 +125,7 @@
       case "set-mode": return setMode(t);
       case "add-rule": return openRuleModal();
       case "close-rule-modal": return closeRuleModal();
-      case "add-chip": return nav("chat");
+      case "add-chip": return addMemory(t);
       case "remove-chip": return removeMemory(t);
     }
   });
@@ -388,13 +387,40 @@
     render();
   }
 
+  const MEMORY_KNOWN_CATS = ["injuries", "schedule", "equipment", "prefers", "dislikes"];
+  const MEMORY_EVENT_CATS = ["target_event", "event"];
   async function wireMemory(root) {
     const render = () => {
       root.innerHTML = S.memory().replace('<div class="screen-inner">', `<div class="screen-inner">${subnavHtml("settings", "memory")}`);
     };
-    const fallback = () => {
-      STATE.coachMemory = JSON.parse(memoryStaticJson);
+    // Build the screen model purely from live backend data — never fall back to
+    // seeded/fake content. memoryIds maps category -> [backend id per chip] so
+    // deletes hit the right row.
+    const build = (groups, error) => {
       memoryIds = {};
+      const known = {};
+      for (const cat of MEMORY_KNOWN_CATS) {
+        const rows = Array.isArray(groups[cat]) ? groups[cat] : [];
+        known[cat] = rows.map((r) => r.content);
+        memoryIds[cat] = rows.map((r) => r.id);
+      }
+      const eventCat = MEMORY_EVENT_CATS.find((c) => Array.isArray(groups[c]) && groups[c].length);
+      let targetEvent = null;
+      if (eventCat) {
+        const rows = groups[eventCat];
+        memoryIds[eventCat] = rows.map((r) => r.id);
+        targetEvent = { content: rows[rows.length - 1].content, category: eventCat, id: rows[rows.length - 1].id };
+      }
+      const handled = new Set([...MEMORY_KNOWN_CATS, ...MEMORY_EVENT_CATS]);
+      const extra = [];
+      for (const cat of Object.keys(groups)) {
+        if (handled.has(cat)) continue;
+        const rows = Array.isArray(groups[cat]) ? groups[cat] : [];
+        if (!rows.length) continue;
+        extra.push({ category: cat, items: rows.map((r) => r.content) });
+        memoryIds[cat] = rows.map((r) => r.id);
+      }
+      STATE.coachMemory = { known, extra, targetEvent, error };
       render();
     };
     root.innerHTML = `<div class="screen-inner"><div class="muted">Loading…</div></div>`;
@@ -402,19 +428,37 @@
       const response = await fetch("/api/memories");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      const groups = data.groups || {};
-      const current = JSON.parse(memoryStaticJson);
-      memoryIds = {};
-      for (const category of ["injuries", "schedule", "equipment", "prefers", "dislikes"]) {
-        const rows = Array.isArray(groups[category]) ? groups[category] : [];
-        current[category] = rows.map((row) => row.content);
-        memoryIds[category] = rows.map((row) => row.id);
-      }
-      STATE.coachMemory = current;
-      render();
-    } catch {
-      fallback();
+      build(data.groups || {});
+    } catch (e) {
+      build({}, String(e && e.message || "Check your connection."));
     }
+  }
+
+  async function addMemory(btn) {
+    const category = btn.dataset.category;
+    if (btn.dataset.editing) return;
+    btn.dataset.editing = "1";
+    const input = document.createElement("input");
+    input.className = "chip chip-add-input";
+    input.placeholder = "Type, then Enter";
+    btn.replaceWith(input);
+    input.focus();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return; done = true;
+      const content = input.value.trim();
+      if (!save || !content) return nav("memory");
+      try {
+        const r = await fetch("/api/memories", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, category }) });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      } catch { toast("Could not add memory"); }
+      nav("memory");
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
   }
 
   async function removeMemory(btn) {

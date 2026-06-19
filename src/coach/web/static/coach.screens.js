@@ -307,29 +307,52 @@ window.SCREENS = (() => {
   }
 
   // ------------------------------------------------------------------- Coach Memory
-  function memory() {
-    const m = STATE.coachMemory;
-    const grp = (category, label, items, chipClass = "chip", strike = false) => `
-      <div class="card">
-        <p class="label-mono" style="margin-bottom:11px">${esc(label)}</p>
+  // Known categories get bespoke labels/styling; any other category the backend
+  // returns is still rendered (so nothing the coach saves is ever hidden).
+  const MEMORY_CATS = {
+    injuries: { label: "INJURIES", chipClass: "chip-orange" },
+    schedule: { label: "SCHEDULE", chipClass: "" },
+    equipment: { label: "EQUIPMENT", chipClass: "" },
+    prefers: { label: "PREFERS", chipClass: "chip-green" },
+    dislikes: { label: "DISLIKES", chipClass: "", strike: true },
+  };
+  const memoryCatLabel = (cat) => (MEMORY_CATS[cat]?.label) || esc(cat).replace(/[_-]+/g, " ").toUpperCase();
+  function memoryGroup(category, items) {
+    const meta = MEMORY_CATS[category] || {};
+    const chips = (items || []).map((it, i) =>
+      `<span class="chip ${meta.chipClass || ""} ${meta.strike ? "chip-strike" : ""}"><span class="t">${esc(it)}</span><span class="x" data-action="remove-chip" data-category="${esc(category)}" data-idx="${i}">×</span></span>`).join("");
+    return `<div class="card">
+        <p class="label-mono" style="margin-bottom:11px">${memoryCatLabel(category)}</p>
         <div class="row wrap" style="gap:8px">
-          ${items.map((it, i) => `<span class="chip ${chipClass} ${strike ? "chip-strike" : ""}"><span class="t">${esc(it)}</span><span class="x" data-action="remove-chip" data-category="${esc(category)}" data-idx="${i}">×</span></span>`).join("")}
-          <span class="chip chip-add" data-action="add-chip">+ add</span>
+          ${chips}
+          <span class="chip chip-add" data-action="add-chip" data-category="${esc(category)}">+ add</span>
         </div>
       </div>`;
+  }
+  function memory() {
+    const m = STATE.coachMemory || {};
+    const known = m.known || {};
+    const extra = m.extra || [];
+    const ev = m.targetEvent;
+    const eventBody = ev
+      ? `<div class="between" style="margin-top:8px"><div style="font-weight:760;font-size:15px">${esc(ev.content)}</div><span class="x" style="color:var(--text-muted);font-weight:700;cursor:pointer;font-size:16px" data-action="remove-chip" data-category="${esc(ev.category)}" data-idx="0">×</span></div>`
+      : `<div class="row wrap" style="gap:8px;margin-top:10px"><span class="chip chip-add" data-action="add-chip" data-category="target_event">+ add</span></div>`;
+    const errorNote = m.error ? `<div class="warn" style="margin-bottom:14px">Couldn't load saved memories. ${esc(m.error)}</div>` : "";
     return `<div class="screen-inner">
       ${crumb(["Profile", "Coach Memory"])}
       <button class="backchev mobile-only" data-action="back">${window.ICONS.chevronLeft(20)} Profile</button>
       ${head("Coach Memory", "What Coach plans around")}
+      ${errorNote}
       <div class="stack">
-        ${grp("injuries", "INJURIES", m.injuries, "chip-orange")}
-        ${grp("schedule", "SCHEDULE", m.schedule)}
-        ${grp("equipment", "EQUIPMENT", m.equipment)}
+        ${memoryGroup("injuries", known.injuries)}
+        ${memoryGroup("schedule", known.schedule)}
+        ${memoryGroup("equipment", known.equipment)}
         <div class="cols" style="grid-template-columns:1fr 1fr;gap:13px">
-          ${grp("prefers", "PREFERS", m.prefers, "chip-green")}
-          ${grp("dislikes", "DISLIKES", m.dislikes, "", true)}
+          ${memoryGroup("prefers", known.prefers)}
+          ${memoryGroup("dislikes", known.dislikes)}
         </div>
-        <div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(m.targetEvent.title)}</div><div class="muted" style="font-size:12px">${esc(m.targetEvent.meta)}</div></div>
+        ${extra.map((g) => memoryGroup(g.category, g.items)).join("")}
+        <div class="card"><p class="label-mono">TARGET EVENT</p>${eventBody}</div>
       </div>
     </div>`;
   }
@@ -361,7 +384,10 @@ window.SCREENS = (() => {
     const targets = `<div class="card"><p class="label-mono" style="margin-bottom:12px">WEEKLY TARGETS</p><div class="stack">${g.weeklyTargets.map(target).join("")}</div></div>`;
     const bias = `<div style="border:1px solid rgba(${th.rgb},0.3);background:rgba(${th.rgb},0.08);border-radius:var(--r-card);padding:13px 14px;color:${th.text};font-size:12.5px">${esc(g.bias)}</div>`;
     const trend = (label, t) => `<div class="card"><div class="between"><div><p class="label-mono">${esc(label)}</p><div class="big" style="font-size:22px;margin-top:4px">${esc(t.value)}</div></div><span class="pill ${label === "BODYWEIGHT" ? "pill-violet" : "pill-green"}">${esc(t.delta)}</span></div><div style="margin-top:10px">${spark(t.trend, t.color)}</div></div>`;
-    const eventCards = `<div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(STATE.coachMemory.targetEvent.title)}</div><div class="muted" style="font-size:12px">${esc(STATE.coachMemory.targetEvent.meta)}</div></div>`;
+    const tev = STATE.coachMemory && STATE.coachMemory.targetEvent;
+    const eventCards = tev
+      ? `<div class="card"><p class="label-mono">TARGET EVENT</p><div style="font-weight:760;font-size:15px;margin-top:8px">${esc(tev.content || tev.title || "")}</div>${tev.meta ? `<div class="muted" style="font-size:12px">${esc(tev.meta)}</div>` : ""}</div>`
+      : "";
 
     return `<div class="screen-inner">
       ${head("Goals & Body Mode", "Coaching mode")}
