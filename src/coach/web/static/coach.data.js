@@ -12,7 +12,6 @@ window.STATE = {
     bodyBattery: { value: "76", meta: "Charged" },
     restingHr: { value: "48 bpm", meta: "−2 vs base" },
     acwr: 1.08,
-    acwrPct: 54,
     recent: [
       { day: "Mon", name: "Push · Strength", meta: "Hevy · 52 min", done: true, accent: "strength" },
       { day: "Tue", name: "Zone 2 · 8.2 km", meta: "Garmin · 44 min", done: true, accent: "cardio" },

@@ -233,7 +233,7 @@ a { color: inherit; text-decoration: none; }
 /* progress / bars */
 .bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .bar > i { display: block; height: 100%; border-radius: 999px; background: var(--strength); }
-.gradient-bar { height: 10px; border-radius: 999px; position: relative; background: linear-gradient(90deg, #3a4150 0%, var(--train) 40%, var(--easy) 70%, var(--cardio) 100%); }
+.gradient-bar { height: 10px; border-radius: 999px; position: relative; background: linear-gradient(90deg, #3a4150 0%, var(--train) 30%, var(--train) 80%, var(--easy) 90%, var(--cardio) 100%); }
 .gradient-bar .marker { position: absolute; top: -3px; width: 4px; height: 16px; border-radius: 3px; background: #fff; transform: translateX(-50%); box-shadow: 0 0 0 3px rgba(0,0,0,0.35); }
 
 /* status line */

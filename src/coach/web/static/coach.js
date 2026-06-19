@@ -564,7 +564,6 @@
           meta: restingDiff,
         },
         acwr: health?.acwr ?? null,
-        acwrPct: health?.acwr == null ? null : Math.max(0, Math.min(100, Math.round(health.acwr / 2 * 100))),
         warning,
       };
       root.innerHTML = S.today();

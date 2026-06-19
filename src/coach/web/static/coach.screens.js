@@ -108,16 +108,26 @@ window.SCREENS = (() => {
       ${signal("RESTING HR", t.restingHr.value, t.restingHr.meta)}
     </div>`;
 
-    const acwr = t.acwr == null
-      ? `<div class="card">
+    let acwr;
+    if (t.acwr == null) {
+      acwr = `<div class="card">
           <div class="between"><p class="label-mono">ACWR · ACUTE:CHRONIC LOAD</p><span class="big" style="font-size:20px;color:var(--muted)">—</span></div>
           <div class="muted" style="font-size:11.5px;margin-top:10px">No training-load data synced yet.</div>
-        </div>`
-      : `<div class="card">
-          <div class="between"><p class="label-mono">ACWR · ACUTE:CHRONIC LOAD</p><span class="big" style="font-size:20px;color:var(--train)">${esc(t.acwr)}</span></div>
-          <div class="gradient-bar" style="margin-top:14px"><div class="marker" style="left:${t.acwrPct}%"></div></div>
-          <div class="between" style="margin-top:8px"><span class="muted" style="font-size:10px">0.8</span><span class="label-mono" style="color:var(--train)">SWEET SPOT</span><span class="muted" style="font-size:10px">1.5</span></div>
         </div>`;
+    } else {
+      const acwrLo = 0.5, acwrHi = 1.5;
+      const acwrPct = Math.max(0, Math.min(100, Math.round((t.acwr - acwrLo) / (acwrHi - acwrLo) * 100)));
+      const [acwrZone, acwrColor] =
+          t.acwr < 0.8 ? ["UNDERLOAD", "var(--text-muted)"]
+        : t.acwr <= 1.3 ? ["SWEET SPOT", "var(--train)"]
+        : t.acwr <= 1.5 ? ["ELEVATED", "var(--easy)"]
+        : ["HIGH RISK", "var(--cardio)"];
+      acwr = `<div class="card">
+          <div class="between"><p class="label-mono">ACWR · ACUTE:CHRONIC LOAD</p><span class="big" style="font-size:20px;color:${acwrColor}">${esc(t.acwr)}</span></div>
+          <div class="gradient-bar" style="margin-top:14px"><div class="marker" style="left:${acwrPct}%"></div></div>
+          <div class="between" style="margin-top:8px"><span class="muted" style="font-size:10px">${acwrLo}</span><span class="label-mono" style="color:${acwrColor}">${acwrZone}</span><span class="muted" style="font-size:10px">${acwrHi}</span></div>
+        </div>`;
+    }
 
     const warning = t.warning ? `<div class="warn">${esc(t.warning)}</div>` : "";
 
